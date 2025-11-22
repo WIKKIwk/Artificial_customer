@@ -161,28 +161,6 @@ rm -rf ./go
 make deps
 ```
 
-## 🐳 Docker
-
-Build:
-```bash
-make docker-build          # image: upg-bot:latest
-```
-
-Run (env va chat.db uchun volume bilan):
-```bash
-make docker-run            # --env-file .env, -v ./data:/data
-```
-
-Qo'lda:
-```bash
-docker run --rm --name upg-bot \
-  --env-file .env \
-  -v $(pwd)/data:/data \
-  upg-bot:latest
-```
-
-Eslatma: `.env` ni imagega qo'shmang; container ichida `CHAT_DB_PATH=/data/chat.db` default qilib berilgan. Agar webhook ishlatgan bo'lsangiz, run qilishdan oldin uni o'chiring: `curl "https://api.telegram.org/bot<token>/deleteWebhook"`.
-
 ## 🎮 Foydalanish
 
 ### Oddiy Foydalanuvchilar

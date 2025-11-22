@@ -1,0 +1,11 @@
+.git
+go/
+data/
+bot
+upg.tar.gz
+.claude
+.env
+.env.local
+*.log
+*.out
+*.test

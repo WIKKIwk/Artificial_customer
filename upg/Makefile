@@ -11,8 +11,6 @@ ENV_EXAMPLE=.env.example
 DEFAULT_CHAT_DB_PATH=$(HOME)/.config/upg/chat.db
 DATA_DIR=data
 DIST_FILE=upg.tar.gz
-DOCKER_IMAGE=upg-bot
-DOCKER_TAG=latest
 
 ## help: Ko'rsatish barcha mavjud komandalar
 help:
@@ -27,8 +25,6 @@ help:
 	@echo "  make lint     - Kodni tekshirish"
 	@echo "  make prepare  - Env, data va deps ni tayyorlash"
 	@echo "  make dist     - Deployment uchun toza tar.gz arxiv yaratish"
-	@echo "  make docker-build - Docker image build qilish"
-	@echo "  make docker-run   - Docker container ishga tushirish"
 
 ## run: Botni ishga tushirish
 run: prepare
@@ -125,17 +121,3 @@ dist:
 		-C . .; \
 	mv $$tmpfile $(DIST_FILE); \
 	echo "Arxiv tayyor: $(DIST_FILE)"
-
-## docker-build: Docker image build
-docker-build:
-	@echo "Docker image build qilinyapti..."
-	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
-	@echo "Image tayyor: $(DOCKER_IMAGE):$(DOCKER_TAG)"
-
-## docker-run: Docker container ishga tushirish
-docker-run:
-	@echo "Docker container ishga tushmoqda..."
-	@docker run --rm --name $(DOCKER_IMAGE) \
-		--env-file $(ENV_FILE) \
-		-v $(PWD)/$(DATA_DIR):/data \
-		$(DOCKER_IMAGE):$(DOCKER_TAG)
