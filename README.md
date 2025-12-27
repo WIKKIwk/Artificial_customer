@@ -1,4 +1,4 @@
-  # 🤖 Telegram AI Kompyuter Do'konchisi Bot
+   # 🤖 Telegram AI Kompyuter Do'konchisi Bot
 
 Go dasturlash tilida yozilgan va Google Gemini 2.0 Flash AI dan foydalanadigan professional Telegram bot. Bot kompyuter texnikasi bo'yicha maslahat beruvchi virtual do'konchi vazifasini bajaradi va Excel fayllar orqali mahsulot katalogini boshqaradi.
 
