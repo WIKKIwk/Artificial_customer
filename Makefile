@@ -1,4 +1,4 @@
-.PHONY: run build clean test deps help
+.PHONY: run build clean test deps help stop logs ps fmt lint install
 
 # Default target
 .DEFAULT_GOAL := help
@@ -7,11 +7,15 @@
 BINARY_NAME=bot
 MAIN_PATH=cmd/bot/main.go
 COMPOSE_SCRIPT=sh ./scripts/compose.sh
+RUN_SCRIPT=sh ./scripts/run.sh
 
 ## help: Ko'rsatish barcha mavjud komandalar
 help:
 	@echo "Mavjud komandalar:"
-	@echo "  make run     - Bot + database ni ishga tushirish"
+	@echo "  make run     - Bot + database ni ishga tushirish (chiroyli output)"
+	@echo "  make ps      - Docker konteynerlar holati"
+	@echo "  make logs    - Docker loglarini ko'rish"
+	@echo "  make stop    - Docker konteynerlarni to'xtatish"
 	@echo "  make build   - Botni build qilish"
 	@echo "  make clean   - Build fayllarni o'chirish"
 	@echo "  make deps    - Dependencies ni o'rnatish"
@@ -21,8 +25,15 @@ help:
 
 ## run: Botni ishga tushirish
 run:
-	@echo "Bot + Database Docker konteynerlarda ishga tushmoqda..."
-	@$(COMPOSE_SCRIPT) up --build --force-recreate --remove-orphans
+	@$(RUN_SCRIPT)
+
+## ps: Docker konteynerlar holati
+ps:
+	@$(COMPOSE_SCRIPT) ps
+
+## logs: Docker loglarini ko'rish
+logs:
+	@$(COMPOSE_SCRIPT) logs -f --tail=200
 
 ## build: Botni build qilish
 build:
