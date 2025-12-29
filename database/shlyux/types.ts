@@ -38,8 +38,11 @@ export interface SelectionRange {
 }
 
 export interface ClipboardData {
+  rows: number;
+  cols: number;
   cells: Array<{ row: number; col: number; data: CellData }>;
   isCut: boolean;
+  source: { startRow: number; startCol: number; endRow: number; endCol: number };
 }
 
 export interface FreezePosition {
