@@ -158,6 +158,7 @@ const App: React.FC = () => {
   const [editingCell, setEditingCell] = useState<{ row: number, col: number } | null>(null);
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
   const clipboardCatcherRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastCopiedTextRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0, row: 0, col: 0 });
   const [formatPainterActive, setFormatPainterActive] = useState(false);
   const copiedFormat = useRef<CellStyle | null>(null);
@@ -1232,23 +1233,24 @@ const App: React.FC = () => {
     const cells: ClipboardData['cells'] = [];
     const tsvRows: string[] = [];
 
-    for (let r = minR; r <= maxR; r++) {
-      const rowVals: string[] = [];
-      for (let c = minC; c <= maxC; c++) {
-        const id = getCellId(r, c);
-        const cell = sheet.data[id];
-        if (cell) {
-          cells.push({ row: r - minR, col: c - minC, data: cell });
-        }
-        rowVals.push(cell?.value ?? '');
-      }
-      tsvRows.push(rowVals.join('\t'));
-    }
-    const text = tsvRows.join('\n');
-    setClipboard({
-      rows: maxR - minR + 1,
-      cols: maxC - minC + 1,
-      cells,
+	    for (let r = minR; r <= maxR; r++) {
+	      const rowVals: string[] = [];
+	      for (let c = minC; c <= maxC; c++) {
+	        const id = getCellId(r, c);
+	        const cell = sheet.data[id];
+	        if (cell) {
+	          cells.push({ row: r - minR, col: c - minC, data: cell });
+	        }
+	        rowVals.push(cell?.value ?? '');
+	      }
+	      tsvRows.push(rowVals.join('\t'));
+	    }
+	    const text = tsvRows.join('\n');
+	    lastCopiedTextRef.current = text;
+	    setClipboard({
+	      rows: maxR - minR + 1,
+	      cols: maxC - minC + 1,
+	      cells,
       isCut,
       source: { startRow: minR, startCol: minC, endRow: maxR, endCol: maxC },
     });
@@ -1289,10 +1291,10 @@ const App: React.FC = () => {
     copySelectionToClipboard(true);
   }, [copySelectionToClipboard, ensureWritable]);
 
-  const pasteTextAtActiveCell = useCallback((clipboardText: string) => {
-    const base = latestSheetRef.current;
-    const activeCell = base.activeCell;
-    if (!activeCell) return;
+	  const pasteTextAtActiveCell = useCallback((clipboardText: string) => {
+	    const base = latestSheetRef.current;
+	    const activeCell = base.activeCell;
+	    if (!activeCell) return;
 
     const normalized = clipboardText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const text = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
@@ -1385,15 +1387,126 @@ const App: React.FC = () => {
 
     if (hasDataInTarget) {
       setOverwriteConfirm({ show: true, action: performPaste });
-    } else {
-      performPaste();
-    }
-  }, [saveState, realtimeClient]);
+	    } else {
+	      performPaste();
+	    }
+	  }, [saveState, realtimeClient]);
 
-  const handlePaste = useCallback(async () => {
-    if (!ensureWritable("qo'yish")) return;
-    if (!sheet.activeCell) return;
-    const { row: baseRow, col: baseCol } = sheet.activeCell;
+	  const pasteInternalClipboardAtActiveCell = useCallback(() => {
+	    if (!clipboard) return;
+	    const clip = clipboard;
+	    const base = latestSheetRef.current;
+	    const activeCell = base.activeCell;
+	    if (!activeCell) return;
+
+	    const baseRow = activeCell.row;
+	    const baseCol = activeCell.col;
+	    const targetEndRow = baseRow + clip.rows - 1;
+	    const targetEndCol = baseCol + clip.cols - 1;
+
+	    let hasDataInTarget = false;
+	    for (let r = 0; r < clip.rows; r++) {
+	      for (let c = 0; c < clip.cols; c++) {
+	        const targetRow = baseRow + r;
+	        const targetCol = baseCol + c;
+	        if (targetCol >= NUM_COLS) continue;
+	        const id = getCellId(targetRow, targetCol);
+	        if (base.data[id]?.value) {
+	          hasDataInTarget = true;
+	          break;
+	        }
+	      }
+	      if (hasDataInTarget) break;
+	    }
+
+	    const performPaste = () => {
+	      const current = latestSheetRef.current;
+	      const newData = { ...current.data };
+	      const editMap = new Map<string, string>();
+	      let maxAffectedRow = -1;
+
+	      // Clear target rectangle first (so empty source cells overwrite)
+	      for (let r = 0; r < clip.rows; r++) {
+	        for (let c = 0; c < clip.cols; c++) {
+	          const targetRow = baseRow + r;
+	          const targetCol = baseCol + c;
+	          if (targetCol >= NUM_COLS) continue;
+	          const id = getCellId(targetRow, targetCol);
+	          if (newData[id]) {
+	            newData[id] = { value: '', computed: '' };
+	            editMap.set(`${targetRow},${targetCol}`, '');
+	          }
+	          if (targetRow > maxAffectedRow) maxAffectedRow = targetRow;
+	        }
+	      }
+
+	      // Apply copied cells
+	      clip.cells.forEach(({ row, col, data }) => {
+	        const targetRow = baseRow + row;
+	        const targetCol = baseCol + col;
+	        if (targetCol >= NUM_COLS) return;
+	        const id = getCellId(targetRow, targetCol);
+	        newData[id] = { ...data };
+	        editMap.set(`${targetRow},${targetCol}`, data.value);
+	        if (targetRow > maxAffectedRow) maxAffectedRow = targetRow;
+	      });
+
+	      if (clip.isCut) {
+	        const src = clip.source;
+	        for (let r = src.startRow; r <= src.endRow; r++) {
+	          for (let c = src.startCol; c <= src.endCol; c++) {
+	            if (c >= NUM_COLS) continue;
+	            const overlapsTarget =
+	              r >= baseRow && r <= targetEndRow &&
+	              c >= baseCol && c <= targetEndCol;
+	            if (overlapsTarget) continue;
+	            const id = getCellId(r, c);
+	            if (newData[id]) {
+	              newData[id] = { value: '', computed: '' };
+	              editMap.set(`${r},${c}`, '');
+	            }
+	            if (r > maxAffectedRow) maxAffectedRow = r;
+	          }
+	        }
+	        setClipboard(null);
+	      }
+
+	      const rowCount = maxAffectedRow >= 0 ? ensureRowCountForIndex(current.rowCount, maxAffectedRow) : current.rowCount;
+	      const selectionEnd = { row: targetEndRow, col: Math.min(NUM_COLS - 1, targetEndCol) };
+	      const nextSheet = {
+	        ...current,
+	        rowCount,
+	        data: recomputeSheet(newData),
+	        activeCell: { row: baseRow, col: baseCol },
+	        selection: { start: { row: baseRow, col: baseCol }, end: selectionEnd }
+	      };
+	      saveState(nextSheet);
+
+	      if (realtimeClient && editMap.size > 0) {
+	        const editsToSend = Array.from(editMap.entries()).map(([key, value]) => {
+	          const [rowStr, colStr] = key.split(',');
+	          return { row: parseInt(rowStr, 10), col: parseInt(colStr, 10), value };
+	        });
+	        if (editsToSend.length === 1) {
+	          const single = editsToSend[0];
+	          realtimeClient.sendCellEdit(single.row, single.col, single.value);
+	        } else {
+	          realtimeClient.sendBatch(editsToSend);
+	        }
+	      }
+	    };
+
+	    if (hasDataInTarget) {
+	      setOverwriteConfirm({ show: true, action: performPaste });
+	    } else {
+	      performPaste();
+	    }
+	  }, [clipboard, saveState, realtimeClient]);
+
+	  const handlePaste = useCallback(async () => {
+	    if (!ensureWritable("qo'yish")) return;
+	    if (!sheet.activeCell) return;
+	    const { row: baseRow, col: baseCol } = sheet.activeCell;
     if (!baseRow && baseRow !== 0) return;
     if (!baseCol && baseCol !== 0) return;
 
@@ -1495,114 +1608,15 @@ const App: React.FC = () => {
 	        pasteTextAtActiveCell(clipboardText);
 	        return;
 	      }
-	    } catch (err) {
-	      console.log('System clipboard read failed, falling back to internal clipboard:', err);
-	    }
+		    } catch (err) {
+		      console.log('System clipboard read failed, falling back to internal clipboard:', err);
+		    }
 
-	    // Fallback to internal clipboard
-	    if (!clipboard || !sheet.activeCell) return;
-	    const targetEndRow = baseRow + clipboard.rows - 1;
-	    const targetEndCol = baseCol + clipboard.cols - 1;
-
-	    // Check if target cells have data
-	    let hasDataInTarget = false;
-	    for (let r = 0; r < clipboard.rows; r++) {
-	      for (let c = 0; c < clipboard.cols; c++) {
-	        const targetRow = baseRow + r;
-	        const targetCol = baseCol + c;
-	        if (targetCol >= NUM_COLS) continue;
-	        const id = getCellId(targetRow, targetCol);
-	        if (sheet.data[id]?.value) {
-	          hasDataInTarget = true;
-	          break;
-	        }
-	      }
-	      if (hasDataInTarget) break;
-	    }
-
-	    const performPaste = () => {
-	      const newData = { ...sheet.data };
-	      const editMap = new Map<string, string>();
-	      let maxAffectedRow = -1;
-
-	      // Clear target rectangle first (so empty source cells overwrite)
-	      for (let r = 0; r < clipboard.rows; r++) {
-	        for (let c = 0; c < clipboard.cols; c++) {
-	          const targetRow = baseRow + r;
-	          const targetCol = baseCol + c;
-	          if (targetCol >= NUM_COLS) continue;
-	          const id = getCellId(targetRow, targetCol);
-	          if (newData[id]) {
-	            newData[id] = { value: '', computed: '' };
-	            editMap.set(`${targetRow},${targetCol}`, '');
-	          }
-	          if (targetRow > maxAffectedRow) maxAffectedRow = targetRow;
-	        }
-	      }
-
-	      // Apply copied cells
-	      clipboard.cells.forEach(({ row, col, data }) => {
-	        const targetRow = baseRow + row;
-	        const targetCol = baseCol + col;
-	        if (targetCol >= NUM_COLS) return;
-	        const id = getCellId(targetRow, targetCol);
-	        newData[id] = { ...data };
-	        editMap.set(`${targetRow},${targetCol}`, data.value);
-	        if (targetRow > maxAffectedRow) maxAffectedRow = targetRow;
-	      });
-
-	      if (clipboard.isCut) {
-	        const src = clipboard.source;
-	        for (let r = src.startRow; r <= src.endRow; r++) {
-	          for (let c = src.startCol; c <= src.endCol; c++) {
-	            if (c >= NUM_COLS) continue;
-	            const overlapsTarget =
-	              r >= baseRow && r <= targetEndRow &&
-	              c >= baseCol && c <= targetEndCol;
-	            if (overlapsTarget) continue;
-	            const id = getCellId(r, c);
-	            if (newData[id]) {
-	              newData[id] = { value: '', computed: '' };
-	              editMap.set(`${r},${c}`, '');
-	            }
-	            if (r > maxAffectedRow) maxAffectedRow = r;
-	          }
-	        }
-	        setClipboard(null);
-	      }
-
-	      const rowCount = maxAffectedRow >= 0 ? ensureRowCountForIndex(sheet.rowCount, maxAffectedRow) : sheet.rowCount;
-	      const selectionEnd = { row: targetEndRow, col: Math.min(NUM_COLS - 1, targetEndCol) };
-	      const newSheet = {
-	        ...sheet,
-	        rowCount,
-	        data: recomputeSheet(newData),
-	        activeCell: { row: baseRow, col: baseCol },
-	        selection: { start: { row: baseRow, col: baseCol }, end: selectionEnd }
-	      };
-	      saveState(newSheet);
-
-	      if (realtimeClient && editMap.size > 0) {
-	        const editsToSend = Array.from(editMap.entries()).map(([key, value]) => {
-	          const [rowStr, colStr] = key.split(',');
-	          return { row: parseInt(rowStr, 10), col: parseInt(colStr, 10), value };
-	        });
-	        if (editsToSend.length === 1) {
-	          const single = editsToSend[0];
-	          realtimeClient.sendCellEdit(single.row, single.col, single.value);
-	        } else {
-	          realtimeClient.sendBatch(editsToSend);
-	        }
-	      }
-	    };
-
-    // Show modal if target has data
-    if (hasDataInTarget) {
-      setOverwriteConfirm({ show: true, action: performPaste });
-    } else {
-      performPaste();
-    }
-  }, [clipboard, sheet, saveState, realtimeClient, token, fileName, applyImportedRows, ensureWritable, pasteTextAtActiveCell]);
+		    // Fallback to internal clipboard
+		    if (!clipboard) return;
+		    pasteInternalClipboardAtActiveCell();
+		    return;
+	  }, [clipboard, sheet, saveState, realtimeClient, token, fileName, applyImportedRows, ensureWritable, pasteTextAtActiveCell, pasteInternalClipboardAtActiveCell]);
 
   const handleDelete = useCallback(() => {
     if (!ensureWritable("o'chirish")) return;
@@ -2399,12 +2413,24 @@ const App: React.FC = () => {
 
       e.preventDefault();
       if (!ensureWritable("qo'yish")) return;
-      pasteTextAtActiveCell(text);
+      const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const normalizedText = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
+      const lastCopied = lastCopiedTextRef.current;
+      const shouldUseInternalClipboard = !!clipboard && (
+        clipboard.isCut ||
+        (!!lastCopied && normalizedText === lastCopied)
+      );
+
+      if (shouldUseInternalClipboard) {
+        pasteInternalClipboardAtActiveCell();
+      } else {
+        pasteTextAtActiveCell(normalizedText);
+      }
     };
 
     window.addEventListener('paste', handlePasteEvent);
     return () => window.removeEventListener('paste', handlePasteEvent);
-  }, [handleImportFile, ensureWritable, pasteTextAtActiveCell]);
+  }, [handleImportFile, ensureWritable, pasteTextAtActiveCell, pasteInternalClipboardAtActiveCell, clipboard]);
 
   const getActiveCellStyle = (): any => {
     if (!sheet.activeCell) return {};
