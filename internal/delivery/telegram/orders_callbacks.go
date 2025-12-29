@@ -136,6 +136,63 @@ func (h *BotHandler) handleOrderOnWayCallback(chatID int64, threadID int, adminI
 	h.setOrderStatus(orderID, "onway")
 }
 
+// handleOrderCancelCallback when admin cancels order (out of stock)
+func (h *BotHandler) handleOrderCancelCallback(chatID int64, threadID int, orderID string, srcMsg *tgbotapi.Message) {
+	info, ok := h.getOrderStatus(orderID)
+	if !ok {
+		h.sendText(chatID, "❌ Order topilmadi.", "", nil, threadID)
+		return
+	}
+	// Active orderdagi xabarni keyinroq o'chirish/edit qilish uchun.
+	if srcMsg != nil && srcMsg.MessageID != 0 {
+		info.ActiveChatID = chatID
+		info.ActiveThreadID = threadID
+		info.ActiveMessageID = srcMsg.MessageID
+		h.orderStatusMu.Lock()
+		h.orderStatuses[orderID] = info
+		h.orderStatusMu.Unlock()
+	}
+
+	canceledAlready := info.Status == "canceled"
+	lang := h.getUserLang(info.UserID)
+
+	if !canceledAlready {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s\n🆔 OrderID: %s\n\n%s",
+			t(lang, "❌ Buyurtmangiz bekor qilindi.", "❌ Ваш заказ отменён."),
+			orderID,
+			t(lang, "🙏 Uzr, omborda hozirgina shu mahsulotimiz sotilib ketdi. 😔", "🙏 К сожалению, товар только что закончился на складе. 😔"),
+		))
+
+		detail := nonEmpty(info.Summary, info.StatusSummary)
+		if strings.TrimSpace(detail) != "" {
+			sb.WriteString(fmt.Sprintf("\n\n%s:\n%s", t(lang, "🧾 Tafsilotlar", "🧾 Детали"), detail))
+		}
+
+		h.sendMessage(info.UserChat, sb.String())
+	}
+
+	h.setOrderStatus(orderID, "canceled")
+
+	loc := nonEmpty(normalizeLocationText(info.Location), "ko'rsatilmagan")
+	editText := fmt.Sprintf("❌ Bekor qilingan buyurtma\nOrderID: %s\nUsername: @%s\nTelefon: %s\nManzil:\n%s\nYetkazish: %s\nJami: %s\n\n%s\n\nSabab: omborda qolmadi.",
+		orderID,
+		nonEmpty(info.Username, "nomalum"),
+		nonEmpty(info.Phone, "ko'rsatilmagan"),
+		loc,
+		nonEmpty(deliveryDisplay(info.Delivery, "uz"), "-"),
+		nonEmpty(h.formatTotalForDisplay(info.Total), "-"),
+		nonEmpty(info.Summary, info.StatusSummary),
+	)
+
+	if srcMsg != nil {
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, srcMsg.MessageID, editText, tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}})
+		if _, err := h.bot.Send(edit); err != nil {
+			log.Printf("order cancel edit failed: %v", err)
+		}
+	}
+}
+
 // Group2 ETA/input handler
 func (h *BotHandler) handleGroup2Message(ctx context.Context, message *tgbotapi.Message) {
 	adminID := message.From.ID

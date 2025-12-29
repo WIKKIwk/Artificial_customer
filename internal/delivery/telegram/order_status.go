@@ -112,6 +112,8 @@ func statusLabel(status, lang string) string {
 		return t(lang, "Yo'lga chiqdi", "В пути")
 	case "delivered":
 		return t(lang, "Yakunlandi", "Доставлен")
+	case "canceled":
+		return t(lang, "Bekor qilindi", "Отменён")
 	default:
 		return t(lang, "Jarayonda", "В обработке")
 	}

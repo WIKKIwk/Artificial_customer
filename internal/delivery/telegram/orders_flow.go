@@ -883,6 +883,7 @@ func (h *BotHandler) sendOrderToGroup2(userID int64, session *orderSession, deli
 		markup := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("✅ Tayyor", "order_ready|"+orderID),
+				tgbotapi.NewInlineKeyboardButtonData("❌ Bekor qilish", "order_cancel|"+orderID),
 			),
 		)
 		if msg, err := h.sendText(h.activeOrdersChatID, orderText, "", markup, h.activeOrdersThreadID); err != nil {

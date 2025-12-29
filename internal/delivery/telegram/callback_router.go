@@ -70,6 +70,24 @@ func (h *BotHandler) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 		return
 	}
 
+	if strings.HasPrefix(data, "order_cancel|") {
+		orderID := strings.TrimPrefix(data, "order_cancel|")
+		threadID := h.activeOrdersThreadID
+		if info, ok := h.getGroupThread(cq.Message.MessageID); ok {
+			if info.ChatID != 0 {
+				chatID = info.ChatID
+			}
+			if info.ThreadID != 0 {
+				threadID = info.ThreadID
+			}
+		}
+		if chatID != h.activeOrdersChatID || threadID == 0 {
+			return
+		}
+		h.handleOrderCancelCallback(chatID, threadID, orderID, cq.Message)
+		return
+	}
+
 	if strings.HasPrefix(data, "db_select|") {
 		isAdmin, _ := h.adminUseCase.IsAdmin(ctx, userID)
 		if !isAdmin {
