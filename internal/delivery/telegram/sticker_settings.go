@@ -22,8 +22,16 @@ const (
 const stickerConfigFile = "data/sticker_config.json"
 
 type stickerConfig struct {
+	Enabled     *bool  `json:"enabled,omitempty"`
 	Login       string `json:"login,omitempty"`
 	OrderPlaced string `json:"order_placed,omitempty"`
+}
+
+func (cfg stickerConfig) isEnabled() bool {
+	if cfg.Enabled == nil {
+		return true
+	}
+	return *cfg.Enabled
 }
 
 func (h *BotHandler) loadStickerConfigFromDisk() {
@@ -47,9 +55,6 @@ func loadStickerConfigFile(path string) (stickerConfig, error) {
 	}
 	cfg.Login = strings.TrimSpace(cfg.Login)
 	cfg.OrderPlaced = strings.TrimSpace(cfg.OrderPlaced)
-	if cfg.Login == "" && cfg.OrderPlaced == "" {
-		return stickerConfig{}, fmt.Errorf("empty config")
-	}
 	return cfg, nil
 }
 
@@ -75,6 +80,18 @@ func (h *BotHandler) getStickerConfig() stickerConfig {
 		return *cfgPtr
 	}
 	return stickerConfig{}
+}
+
+func (h *BotHandler) setStickerEnabled(enabled bool) error {
+	cfg := h.getStickerConfig()
+	cfg.Enabled = &enabled
+	if err := saveStickerConfigFile(stickerConfigFile, cfg); err != nil {
+		return err
+	}
+	h.stickerMu.Lock()
+	h.stickerCfg = &cfg
+	h.stickerMu.Unlock()
+	return nil
 }
 
 func (h *BotHandler) setStickerForSlot(slot stickerSlot, fileID string) error {
@@ -116,6 +133,9 @@ func (h *BotHandler) getStickerFileID(slot stickerSlot) string {
 
 func (h *BotHandler) sendStickerIfConfigured(chatID int64, slot stickerSlot) {
 	if h == nil || h.bot == nil || chatID == 0 {
+		return
+	}
+	if !h.getStickerConfig().isEnabled() {
 		return
 	}
 	fileID := h.getStickerFileID(slot)
@@ -168,6 +188,49 @@ func stickerStatusMark(fileID string) string {
 	return "✅"
 }
 
+func stickerEnabledMark(enabled bool) string {
+	if enabled {
+		return "🟢 ON"
+	}
+	return "🔴 OFF"
+}
+
+func (h *BotHandler) buildStickerMenu(lang string) (string, tgbotapi.InlineKeyboardMarkup) {
+	cfg := h.getStickerConfig()
+
+	text := fmt.Sprintf(
+		"%s\n\n🔔 %s: %s\n👋 %s: %s\n🧾 %s: %s\n\n%s",
+		t(lang, "🧩 Sticker sozlamalari", "🧩 Настройки стикеров"),
+		t(lang, "Holat", "Статус"),
+		stickerEnabledMark(cfg.isEnabled()),
+		t(lang, "Login", "Вход"),
+		stickerStatusMark(cfg.Login),
+		t(lang, "Buyurtma", "Заказ"),
+		stickerStatusMark(cfg.OrderPlaced),
+		t(lang, "Nimani sozlamoqchisiz?", "Что настроить?"),
+	)
+
+	toggleText := t(lang, "🔴 O‘chirish", "🔴 Выключить")
+	toggleData := "sticker_enabled|0"
+	if !cfg.isEnabled() {
+		toggleText = t(lang, "🟢 Yoqish", "🟢 Включить")
+		toggleData = "sticker_enabled|1"
+	}
+
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(toggleText, toggleData),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "👋 Login sticker", "👋 Стикер входа"), "sticker_set|login"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "🧾 Buyurtma sticker", "🧾 Стикер заказа"), "sticker_set|order_placed"),
+		),
+	)
+	return text, kb
+}
+
 func (h *BotHandler) handleStickerCommand(ctx context.Context, message *tgbotapi.Message) {
 	if message == nil || message.From == nil {
 		return
@@ -181,31 +244,40 @@ func (h *BotHandler) handleStickerCommand(ctx context.Context, message *tgbotapi
 
 	h.deleteCommandMessage(message)
 	lang := h.getUserLang(adminID)
-
-	cfg := h.getStickerConfig()
-	text := fmt.Sprintf(
-		"%s\n\n👋 %s: %s\n🧾 %s: %s\n\n%s",
-		t(lang, "🧩 Sticker sozlamalari", "🧩 Настройки стикеров"),
-		t(lang, "Login", "Вход"),
-		stickerStatusMark(cfg.Login),
-		t(lang, "Buyurtma", "Заказ"),
-		stickerStatusMark(cfg.OrderPlaced),
-		t(lang, "Qaysi holat uchun sticker belgilaysiz?", "Для какого события задать стикер?"),
-	)
-
-	kb := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(t(lang, "👋 Login", "👋 Вход"), "sticker_set|login"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(t(lang, "🧾 Buyurtma rasmiylashtirildi", "🧾 Заказ оформлен"), "sticker_set|order_placed"),
-		),
-	)
-
+	text, kb := h.buildStickerMenu(lang)
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ReplyMarkup = kb
 	if sent, err := h.sendAndLog(msg); err == nil {
 		h.trackAdminMessage(message.Chat.ID, sent.MessageID)
+	}
+}
+
+func (h *BotHandler) handleStickerEnabledCallback(ctx context.Context, chatID int64, adminID int64, enabled bool, srcMsg *tgbotapi.Message) {
+	isAdmin, _ := h.adminUseCase.IsAdmin(ctx, adminID)
+	if !isAdmin {
+		h.sendMessage(chatID, "❌ Bu funksiya faqat adminlar uchun.")
+		return
+	}
+
+	if err := h.setStickerEnabled(enabled); err != nil {
+		h.sendMessage(chatID, "❌ Saqlashda xatolik. Qayta urinib ko'ring.")
+		return
+	}
+
+	lang := h.getUserLang(adminID)
+	text, kb := h.buildStickerMenu(lang)
+	if srcMsg != nil && srcMsg.MessageID != 0 {
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, srcMsg.MessageID, text, kb)
+		if _, err := h.bot.Send(edit); err != nil {
+			h.sendMessage(chatID, t(lang, "✅ Saqlandi.", "✅ Сохранено."))
+		}
+		return
+	}
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = kb
+	if sent, err := h.sendAndLog(msg); err == nil {
+		h.trackAdminMessage(chatID, sent.MessageID)
 	}
 }
 
@@ -295,4 +367,3 @@ func (h *BotHandler) handleStickerSetupInput(ctx context.Context, message *tgbot
 	h.sendMessage(message.Chat.ID, t(lang, "✅ Sticker saqlandi.", "✅ Стикер сохранён."))
 	return true
 }
-

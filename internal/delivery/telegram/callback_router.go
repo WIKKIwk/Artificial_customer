@@ -104,6 +104,13 @@ func (h *BotHandler) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 		return
 	}
 
+	if strings.HasPrefix(data, "sticker_enabled|") {
+		raw := strings.TrimPrefix(data, "sticker_enabled|")
+		enabled := raw == "1" || strings.EqualFold(raw, "on") || strings.EqualFold(raw, "true")
+		h.handleStickerEnabledCallback(ctx, chatID, userID, enabled, cq.Message)
+		return
+	}
+
 	if strings.HasPrefix(data, "db_select|") {
 		isAdmin, _ := h.adminUseCase.IsAdmin(ctx, userID)
 		if !isAdmin {
