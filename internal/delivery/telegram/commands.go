@@ -63,6 +63,9 @@ func (h *BotHandler) handleCommand(ctx context.Context, message *tgbotapi.Messag
 		h.handleOnlineCommand(ctx, message)
 	case "user":
 		h.handleUsersCommand(ctx, message)
+	case "users":
+		// Alias (admin menu oldin noto'g'ri yozilgan)
+		h.handleUsersCommand(ctx, message)
 	case "user_chat_history":
 		h.handleUserChatHistoryCommand(ctx, message)
 	case "userchathistory":

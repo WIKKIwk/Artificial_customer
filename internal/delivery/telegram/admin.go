@@ -1057,7 +1057,7 @@ func (h *BotHandler) getAdminMenuText() string {
 
 👥 *Foydalanuvchilar:*
 • /online - Faollik
-• /users - Ro'yxat
+• /user - Ro'yxat
 • /userchathistory - Chat tarixi
 • /about\_user - Foydalanuvchilar eksporti (XLSX)
 • /broadcast - Hammaga xabar

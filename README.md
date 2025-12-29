@@ -234,7 +234,7 @@ Endi men ushbu mahsulotlar bilan mijozlarga xizmat ko'rsataman!
 
 **Foydalanuvchilar:**
 - `/online` - Onlayn statistika
-- `/users` - Foydalanuvchilar ro'yxati
+- `/user` - Foydalanuvchilar ro'yxati
 - `/broadcast <xabar>` - Hammaga xabar yuborish
 
 **Buyurtmalar:**
