@@ -453,6 +453,7 @@ func (h *BotHandler) handleDeliveryChoice(ctx context.Context, userID int64, cho
 		lang := h.getUserLang(userID)
 		h.sendOrderForm(userID, t(lang, "✅ Buyurtmangiz qabul qilindi. Tayyor bo'lganda admin sizga bog'lanadi.", "✅ Заказ принят. Как будет готов, с вами свяжется админ."), nil)
 		h.sendOrderToGroup2(userID, session, "Olib ketish", "")
+		h.sendStickerIfConfigured(chatID, stickerSlotOrderPlaced)
 		h.clearOrderSession(userID)
 	} else {
 		lang := h.getUserLang(userID)
@@ -482,6 +483,7 @@ func (h *BotHandler) handleDeliveryConfirm(ctx context.Context, userID int64, ag
 		h.orderSessions[userID] = session
 		h.orderMu.Unlock()
 		h.sendOrderToGroup2(userID, session, "Olib ketish", "Dostavka narxiga rozilik bermadi")
+		h.sendStickerIfConfigured(chatID, stickerSlotOrderPlaced)
 		h.clearOrderSession(userID)
 		return
 	}
@@ -492,6 +494,7 @@ func (h *BotHandler) handleDeliveryConfirm(ctx context.Context, userID int64, ag
 
 	if h.activeOrdersChatID != 0 {
 		h.sendOrderToGroup2(userID, session, "Dostavka (Yandex Go)", "Rozilik berildi")
+		h.sendStickerIfConfigured(chatID, stickerSlotOrderPlaced)
 	}
 	h.clearOrderSession(userID)
 }

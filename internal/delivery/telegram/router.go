@@ -79,6 +79,10 @@ func (h *BotHandler) handleMessage(ctx context.Context, message *tgbotapi.Messag
 		}
 	}
 
+	if h.handleStickerSetupInput(ctx, message) {
+		return
+	}
+
 	if message.Document != nil {
 		h.handleDocumentMessage(ctx, message)
 		return

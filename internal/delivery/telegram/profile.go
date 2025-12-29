@@ -105,4 +105,5 @@ func (h *BotHandler) sendGreeting(chatID int64, lang, name string) {
 	h.cleanupWelcomeMessages(chatID)
 	text := h.getWelcomeMessage(lang, name)
 	h.sendMessage(chatID, text)
+	h.sendStickerIfConfigured(chatID, stickerSlotLogin)
 }

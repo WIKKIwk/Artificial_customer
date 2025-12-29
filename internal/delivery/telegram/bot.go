@@ -107,6 +107,10 @@ type BotHandler struct {
 	sheetMasterMu  sync.RWMutex
 	sheetMasterCfg *sheetMasterConfig
 
+	stickerMu    sync.RWMutex
+	stickerCfg   *stickerConfig
+	stickerAwait map[int64]stickerSlot
+
 	sheetMasterSetupMu sync.RWMutex
 	sheetMasterSetup   map[int64]*sheetMasterSetupState
 
@@ -247,6 +251,7 @@ func NewBotHandler(
 		purchasePrompt:     make(map[int64]string),
 		purchaseTitle:      make(map[int64]string),
 		purchaseMsg:        make(map[int64]purchasePromptMessage),
+		stickerAwait:       make(map[int64]stickerSlot),
 		sheetMasterSetup:   make(map[int64]*sheetMasterSetupState),
 		lastSeen:           make(map[int64]time.Time),
 		lastName:           make(map[int64]string),
@@ -283,6 +288,7 @@ func NewBotHandler(
 
 	// Load SheetMaster config from disk (optional)
 	handler.loadSheetMasterConfigFromDisk()
+	handler.loadStickerConfigFromDisk()
 
 	return handler, nil
 }

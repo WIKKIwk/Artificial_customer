@@ -88,6 +88,22 @@ func (h *BotHandler) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 		return
 	}
 
+	if strings.HasPrefix(data, "sticker_set|") {
+		raw := strings.TrimPrefix(data, "sticker_set|")
+		var slot stickerSlot
+		switch raw {
+		case "login":
+			slot = stickerSlotLogin
+		case "order_placed":
+			slot = stickerSlotOrderPlaced
+		default:
+			h.sendMessage(chatID, "❌ Noto'g'ri tanlov.")
+			return
+		}
+		h.handleStickerSelectCallback(ctx, chatID, userID, slot)
+		return
+	}
+
 	if strings.HasPrefix(data, "db_select|") {
 		isAdmin, _ := h.adminUseCase.IsAdmin(ctx, userID)
 		if !isAdmin {
