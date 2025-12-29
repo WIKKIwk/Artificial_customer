@@ -246,7 +246,7 @@ func (h *BotHandler) handleOrderFlow(ctx context.Context, userID int64, username
 		// ✅ Ism validatsiyasi qo'shildi
 		if !validateName(session.Name) {
 			lang := h.getUserLang(userID)
-			h.sendOrderForm(userID, t(lang, "Noto'g'ri ism formati. Iltimos, to'liq ismingizni kiriting (kamida 2 ta harf).", "Неверный формат имени. Укажите полное имя (минимум 2 буквы)."), nil)
+			h.sendOrderForm(userID, t(lang, "Noto'g'ri ism formati. Iltimos, ismingizni faqat harflar bilan kiriting (kamida 2 ta harf).", "Неверный формат имени. Укажите имя только буквами (минимум 2 буквы)."), nil)
 			return
 		}
 		h.setProfile(userID, userProfile{Name: session.Name})
@@ -275,7 +275,7 @@ func (h *BotHandler) handleOrderFlow(ctx context.Context, userID int64, username
 		}
 		// ✅ Telefon validatsiyasi qo'shildi
 		if !validatePhoneNumber(phone) {
-			h.sendOrderForm(userID, "Noto'g'ri telefon format! Masalan: +998901234567", nil)
+			h.sendOrderForm(userID, t(h.getUserLang(userID), "Noto'g'ri telefon raqami! Kamida 7 ta raqam bo'lishi kerak. Masalan: +998901234567", "Неверный номер телефона! Минимум 7 цифр. Например: +998901234567"), nil)
 			return
 		}
 		oldMsg := session.MessageID

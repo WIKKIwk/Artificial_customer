@@ -36,7 +36,7 @@ func (h *BotHandler) handleTextMessage(ctx context.Context, userID int64, userna
 			name := strings.TrimSpace(text)
 			lang := h.getUserLang(userID)
 			if name == "" || !validateName(name) {
-				h.sendMessage(chatID, t(lang, "Iltimos, to'liq ismingizni yozing.", "Пожалуйста, укажите полное имя."))
+				h.sendMessage(chatID, t(lang, "Iltimos, to'liq ismingizni faqat harflar bilan yozing (kamida 2 ta harf).", "Пожалуйста, укажите имя только буквами (минимум 2 буквы)."))
 				return
 			}
 			h.setProfile(userID, userProfile{Name: name})
@@ -60,7 +60,7 @@ func (h *BotHandler) handleTextMessage(ctx context.Context, userID int64, userna
 				phone = strings.TrimSpace(text)
 			}
 			if !validatePhoneNumber(phone) {
-				h.sendMessage(chatID, t(lang, "Noto'g'ri telefon formati! Masalan: +998901234567", "Неверный формат телефона! Например: +998901234567"))
+				h.sendMessage(chatID, t(lang, "Noto'g'ri telefon raqami! Kamida 7 ta raqam bo'lishi kerak. Masalan: +998901234567", "Неверный номер телефона! Минимум 7 цифр. Например: +998901234567"))
 				h.sendPhoneRequest(chatID)
 				return
 			}

@@ -108,6 +108,7 @@ func TestPhoneValidation(t *testing.T) {
 		{"+998901234567", true},
 		{"998901234567", true},
 		{"901234567", true},
+		{"1234567", true},
 		{"+99890 123 45 67", true}, // Bo'shliq bilan
 		{"abc123", false},
 		{"123", false},
@@ -131,6 +132,9 @@ func TestNameValidation(t *testing.T) {
 		{"John Doe", true},
 		{"Алишер Навоий", true},
 		{"O'zbek", true},
+		{"John.", false},
+		{"John, Doe", false},
+		{"Jasur123", false},
 		{"A", false},
 		{"123", false},
 		{"", false},

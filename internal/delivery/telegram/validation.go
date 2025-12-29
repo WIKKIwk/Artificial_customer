@@ -1,30 +1,52 @@
 package telegram
 
 import (
-	"regexp"
 	"strings"
+	"unicode"
 )
 
 // validatePhoneNumber telefon raqamni validatsiya qilish
 func validatePhoneNumber(phone string) bool {
-	// Bo'shliqlarni olib tashlash
-	phone = strings.ReplaceAll(phone, " ", "")
-	phone = strings.ReplaceAll(phone, "-", "")
 	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return false
+	}
 
-	// Telefon raqam regex: +998901234567 yoki 901234567 yoki 998901234567
-	phoneRegex := regexp.MustCompile(`^\+?[0-9]{9,15}$`)
-	return phoneRegex.MatchString(phone)
+	var digits strings.Builder
+	digits.Grow(len(phone))
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+
+	// Allowed: 7..15 digits (e.g. 901234567, 1234567, 998901234567)
+	n := digits.Len()
+	return n >= 7 && n <= 15
 }
 
 // validateName ism validatsiyasi
 func validateName(name string) bool {
 	name = strings.TrimSpace(name)
-	// Kamida 2 ta harf bo'lishi kerak
-	if len(name) < 2 {
+	if name == "" {
 		return false
 	}
-	//Faqat harflar, bo'shliqlar va ba'zi maxsus belgilar
-	nameRegex := regexp.MustCompile(`^[a-zA-ZÀ-ÿА-яЁёўӮөҒғҚқҲҳ\s'-]+$`)
-	return nameRegex.MatchString(name)
+
+	letters := 0
+	for _, r := range name {
+		switch {
+		case unicode.IsLetter(r):
+			letters++
+		case unicode.IsSpace(r):
+			// allow spaces between words
+		case r == '\'' || r == '’' || r == '‘' || r == 'ʼ' || r == '-':
+			// allow common apostrophes / hyphen in Uzbek names
+		default:
+			// digits, dots, commas, etc. are not allowed
+			return false
+		}
+	}
+
+	// Kamida 2 ta harf bo'lishi kerak
+	return letters >= 2
 }
