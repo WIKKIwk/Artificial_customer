@@ -94,6 +94,25 @@ func (h *BotHandler) setStickerEnabled(enabled bool) error {
 	return nil
 }
 
+func (h *BotHandler) clearStickerForSlot(slot stickerSlot) error {
+	cfg := h.getStickerConfig()
+	switch slot {
+	case stickerSlotLogin:
+		cfg.Login = ""
+	case stickerSlotOrderPlaced:
+		cfg.OrderPlaced = ""
+	default:
+		return fmt.Errorf("unknown sticker slot: %s", slot)
+	}
+	if err := saveStickerConfigFile(stickerConfigFile, cfg); err != nil {
+		return err
+	}
+	h.stickerMu.Lock()
+	h.stickerCfg = &cfg
+	h.stickerMu.Unlock()
+	return nil
+}
+
 func (h *BotHandler) setStickerForSlot(slot stickerSlot, fileID string) error {
 	fileID = strings.TrimSpace(fileID)
 	if fileID == "" {
@@ -231,6 +250,31 @@ func (h *BotHandler) buildStickerMenu(lang string) (string, tgbotapi.InlineKeybo
 	return text, kb
 }
 
+func (h *BotHandler) buildStickerSlotPrompt(lang string, slot stickerSlot) (string, *tgbotapi.InlineKeyboardMarkup) {
+	fileID := h.getStickerFileID(slot)
+
+	text := fmt.Sprintf(
+		"%s: %s\n%s: %s\n\n%s\n\n%s",
+		t(lang, "Tanlandi", "Выбрано"),
+		stickerSlotLabel(lang, slot),
+		t(lang, "Hozirgi", "Текущий"),
+		stickerStatusMark(fileID),
+		t(lang, "Endi qaysi sticker tashlashni istasangiz shu sticker'ni shu yerga yuboring.", "Теперь отправьте сюда стикер, который нужно отправлять."),
+		t(lang, "Bekor qilish: /cancel", "Отмена: /cancel"),
+	)
+
+	if strings.TrimSpace(fileID) == "" {
+		return text, nil
+	}
+
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "🚫 Sticker OFF", "🚫 Стикер OFF"), "sticker_clear|"+string(slot)),
+		),
+	)
+	return text, &kb
+}
+
 func (h *BotHandler) handleStickerCommand(ctx context.Context, message *tgbotapi.Message) {
 	if message == nil || message.From == nil {
 		return
@@ -294,10 +338,56 @@ func (h *BotHandler) handleStickerSelectCallback(ctx context.Context, chatID int
 
 	h.setStickerAwait(adminID, slot)
 	lang := h.getUserLang(adminID)
-	h.sendMessage(chatID, fmt.Sprintf(
-		t(lang, "Tanlandi: %s.\nEndi qaysi sticker tashlashni istasangiz shu sticker'ni shu yerga yuboring.\n\nBekor qilish: /cancel", "Выбрано: %s.\nТеперь отправьте сюда стикер, который нужно отправлять.\n\nОтмена: /cancel"),
-		stickerSlotLabel(lang, slot),
-	))
+	text, kb := h.buildStickerSlotPrompt(lang, slot)
+	msg := tgbotapi.NewMessage(chatID, text)
+	if kb != nil {
+		msg.ReplyMarkup = *kb
+	}
+	if sent, err := h.sendAndLog(msg); err == nil {
+		h.trackAdminMessage(chatID, sent.MessageID)
+	}
+}
+
+func (h *BotHandler) handleStickerClearCallback(ctx context.Context, chatID int64, adminID int64, slot stickerSlot, srcMsg *tgbotapi.Message) {
+	isAdmin, _ := h.adminUseCase.IsAdmin(ctx, adminID)
+	if !isAdmin {
+		h.sendMessage(chatID, "❌ Bu funksiya faqat adminlar uchun.")
+		return
+	}
+	if slot != stickerSlotLogin && slot != stickerSlotOrderPlaced {
+		h.sendMessage(chatID, "❌ Noto'g'ri tanlov.")
+		return
+	}
+
+	if err := h.clearStickerForSlot(slot); err != nil {
+		h.sendMessage(chatID, "❌ Saqlashda xatolik. Qayta urinib ko'ring.")
+		return
+	}
+
+	h.setStickerAwait(adminID, slot)
+	lang := h.getUserLang(adminID)
+	baseText, kb := h.buildStickerSlotPrompt(lang, slot)
+	text := fmt.Sprintf("%s\n\n%s", t(lang, "✅ Sticker o‘chirildi.", "✅ Стикер выключен."), baseText)
+
+	if srcMsg != nil && srcMsg.MessageID != 0 {
+		markup := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+		if kb != nil {
+			markup = *kb
+		}
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, srcMsg.MessageID, text, markup)
+		if _, err := h.bot.Send(edit); err != nil {
+			h.sendMessage(chatID, t(lang, "✅ Sticker o‘chirildi.", "✅ Стикер выключен."))
+		}
+		return
+	}
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	if kb != nil {
+		msg.ReplyMarkup = *kb
+	}
+	if sent, err := h.sendAndLog(msg); err == nil {
+		h.trackAdminMessage(chatID, sent.MessageID)
+	}
 }
 
 // handleStickerSetupInput consumes messages while admin is in /sticker setup mode.

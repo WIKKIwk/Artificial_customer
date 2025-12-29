@@ -104,6 +104,22 @@ func (h *BotHandler) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 		return
 	}
 
+	if strings.HasPrefix(data, "sticker_clear|") {
+		raw := strings.TrimPrefix(data, "sticker_clear|")
+		var slot stickerSlot
+		switch raw {
+		case "login":
+			slot = stickerSlotLogin
+		case "order_placed":
+			slot = stickerSlotOrderPlaced
+		default:
+			h.sendMessage(chatID, "❌ Noto'g'ri tanlov.")
+			return
+		}
+		h.handleStickerClearCallback(ctx, chatID, userID, slot, cq.Message)
+		return
+	}
+
 	if strings.HasPrefix(data, "sticker_enabled|") {
 		raw := strings.TrimPrefix(data, "sticker_enabled|")
 		enabled := raw == "1" || strings.EqualFold(raw, "on") || strings.EqualFold(raw, "true")
