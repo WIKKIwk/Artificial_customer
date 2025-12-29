@@ -34,4 +34,10 @@ type ProductRepository interface {
 
 	// Clear barcha mahsulotlarni o'chirish
 	Clear(ctx context.Context) error
+
+	// SaveCSV CSV ma'lumotlarini xotirada saqlash
+	SaveCSV(ctx context.Context, csvData string, filename string) error
+
+	// GetCSV saqlangan CSV ma'lumotlarini olish
+	GetCSV(ctx context.Context) (string, string, error)
 }

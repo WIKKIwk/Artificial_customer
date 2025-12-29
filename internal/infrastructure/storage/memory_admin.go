@@ -58,18 +58,24 @@ func (m *memoryAdminRepository) DeleteSession(ctx context.Context, userID int64)
 
 // IsAdmin foydalanuvchi admin ekanligini tekshirish
 func (m *memoryAdminRepository) IsAdmin(ctx context.Context, userID int64) (bool, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	session, exists := m.sessions[userID]
 	if !exists {
 		return false, nil
 	}
 
-	// Session timeout tekshirish (24 soat)
-	if time.Since(session.LastActivity) > 24*time.Hour {
+	// Session timeout tekshirish
+	if time.Now().After(session.ExpiresAt) {
+		// Session muddati tugagan - o'chirish
+		delete(m.sessions, userID)
 		return false, nil
 	}
+
+	// Session aktiv - oxirgi faollikni yangilash
+	session.LastActivity = time.Now()
+	m.sessions[userID] = session
 
 	return session.IsAdmin, nil
 }

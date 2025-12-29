@@ -1,0 +1,50 @@
+services:
+  bot:
+    build: .
+    container_name: upg-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # If POSTGRES_DSN is not provided (e.g. in `.env`), the bot builds it from these variables.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_SSLMODE: disable
+      POSTGRES_USER: ${POSTGRES_USER:-upg_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1}
+      POSTGRES_DB: ${POSTGRES_DB:-upg_db}
+      # Allow the bot container to start even if secrets are missing.
+      ALLOW_EMPTY_SECRETS: ${ALLOW_EMPTY_SECRETS:-1}
+      # SheetMaster (database) API (when started via `make run`)
+      SHEETMASTER_API_BASE_URL: ${SHEETMASTER_API_BASE_URL:-http://backend-go:8080}
+      # Realtime bridge (updates SheetMaster UI after DB changes)
+      REALTIME_INTERNAL_URL: ${REALTIME_INTERNAL_URL:-http://host.docker.internal:4000/api/internal}
+      REALTIME_INTERNAL_SECRET: ${REALTIME_INTERNAL_SECRET:-converter-internal-dev-secret}
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: upg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-upg_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1}
+      POSTGRES_DB: ${POSTGRES_DB:-upg_db}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-upg_user} -d ${POSTGRES_DB:-upg_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5433:5432"
+    volumes:
+      - upg_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  upg_postgres_data:

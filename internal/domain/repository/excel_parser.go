@@ -13,4 +13,7 @@ type ExcelParser interface {
 
 	// ParseProductsFromBytes byte array dan parse qilish
 	ParseProductsFromBytes(ctx context.Context, data []byte, filename string) ([]entity.Product, error)
+
+	// ConvertToCSV Excel faylni CSV formatga o'girish
+	ConvertToCSV(ctx context.Context, data []byte, filename string) (string, error)
 }

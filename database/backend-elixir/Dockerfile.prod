@@ -1,0 +1,68 @@
+# Production Build - Elixir/Phoenix Backend
+# Multi-stage build for production release
+
+# ========================================
+# Stage 1: Builder
+# ========================================
+FROM elixir:1.15-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git build-base npm
+
+WORKDIR /app
+
+# Install hex and rebar
+RUN mix local.hex --force && \
+    mix local.rebar --force
+
+# Set production environment
+ENV MIX_ENV=prod
+
+# Copy mix files
+COPY mix.exs mix.lock ./
+RUN mix deps.get --only prod
+RUN mix deps.compile
+
+# Copy application code
+COPY . .
+
+# Compile application
+RUN mix compile
+
+# Build release
+RUN mix release
+
+# ========================================
+# Stage 2: Production
+# ========================================
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    bash \
+    openssl \
+    ncurses-libs \
+    ca-certificates \
+    curl
+
+WORKDIR /app
+
+# Copy release from builder
+COPY --from=builder /app/_build/prod/rel/converter_backend ./
+
+# Create non-root user
+RUN addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+# Expose port
+EXPOSE 4000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:4000/health || exit 1
+
+# Run
+CMD ["/app/bin/converter_backend", "start"]

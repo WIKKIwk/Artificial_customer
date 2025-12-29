@@ -1,9 +1,12 @@
 .git
 go/
 data/
+database/
+.gocache/
 bot
+bot.exe
 upg.tar.gz
-.claude
+.claude/
 .env
 .env.local
 *.log

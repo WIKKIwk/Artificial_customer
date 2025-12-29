@@ -1,0 +1,62 @@
+# Environment files
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Backups
+backups/
+*.sql
+*.sql.gz
+
+# SSL Certificates
+nginx/ssl/*.pem
+nginx/ssl/*.key
+*.crt
+*.key
+
+# Docker volumes
+postgres_data/
+redis_data/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Elixir
+_build/
+deps/
+*.ez
+erl_crash.dump
+
+# Temporary files
+tmp/
+temp/
+*.tmp

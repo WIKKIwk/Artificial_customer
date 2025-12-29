@@ -46,13 +46,17 @@ telegram-ai-bot/
 - 🛍️ **Smart do'konchi** - Mahsulot katalogi asosida savdo qiladi
 
 ### 👨‍💼 Admin Panel
-- 🔐 **Parol bilan himoyalangan** - Admin panel (parol: `@#12`)
+- 🔐 **Parol bilan himoyalangan** - Environment variable orqali (`.env`: `ADMIN_PASSWORD`)
 - 📤 **Excel yuklash** - Mahsulot katalogini Excel fayldan yuklash (max 5MB)
 - 📊 **Katalog boshqaruvi** - Mahsulotlar va kategoriyalarni ko'rish
 - 📝 **Admin log** - Barcha admin harakatlari loglanadi
+- 🗄️ **Database (SheetMaster) sync** - Katalogni API orqali yangilash
+- 🕐 **Session timeout** - 24 soat avtomatik logout
 
 ### 📦 Mahsulot Katalogi
 - 🗂️ **Excel import** - .xlsx va .xls formatlarini qo'llab-quvvatlash
+- 🗄️ **Database import** - API orqali katalogni yangilash (/db\_sync)
+- 🔄 **Multi-admin** - Bir necha admin bir vaqtda tahrirlashi mumkin
 - 🔍 **Avtomatik parsing** - Kategoriya, narx, tavsif va boshqalar
 - 💰 **Narx ma'lumotlari** - Turli valyuta formatlarini qo'llab-quvvatlash
 - 📊 **Ombor ma'lumotlari** - Stock tracking
@@ -71,56 +75,44 @@ telegram-ai-bot/
 - Telegram Bot Token
 - Google Gemini API Key
 
-### Tez start (`make`)
+### 1. Repository ni clone qiling
 
 ```bash
 git clone <repository-url>
 cd telegram-ai-bot
-make
 ```
 
-`make` quyidagilarni bajaradi:
-- `.env` mavjud bo'lmasa `.env.example` dan nusxa olib, tokenlarni kiritish uchun jarayonni to'xtatadi
-- Dependencies ni avtomatik yuklaydi (`go mod download` + `go mod tidy`)
-- `data/` papkasini yaratadi
-- Tokenlar to'g'ri kiritilgan bo'lsa botni darhol ishga tushiradi
+### 2. Dependencies ni o'rnating
 
-Tokenlarni kiritib bo'lgach `make` ni qayta ishga tushiring. Faqat tayyorgarlikni bajarish uchun `make prepare` dan foydalanishingiz mumkin.
+```bash
+go mod download
+```
 
-### Qo'lda o'rnatish
+Yoki Makefile dan foydalaning:
 
-1. Repository ni clone qiling:
-   ```bash
-   git clone <repository-url>
-   cd telegram-ai-bot
-   ```
-2. Dependencies ni o'rnating:
-   ```bash
-   go mod download
-   ```
-3. Environment faylni sozlang:
-   ```bash
-   cp .env.example .env
-   ```
-   `.env` faylini tahrirlang:
-   ```env
-   TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
-   GEMINI_API_KEY=AIzaSy...
-   ```
-4. Botni ishga tushiring:
-   **Development:**
-   ```bash
-   go run cmd/bot/main.go
-   ```
-   Yoki Makefile:
-   ```bash
-   make        # default holatda prepare + run
-   ```
-   **Production:**
-   ```bash
-   make build
-   ./bot
-   ```
+```bash
+make deps
+```
+
+### 3. Environment faylni sozlang
+
+```bash
+cp .env.example .env
+```
+
+`.env` faylini tahrirlang:
+
+```env
+TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+GEMINI_API_KEY=AIzaSy...
+ADMIN_PASSWORD=your_secure_password_here
+```
+
+**MUHIM:** Admin parolni murakkab va xavfsiz parolga o'zgartiring!
+
+**Postgres (buyurtmalar uchun):**
+- Docker Compose bilan ishga tushirganda Postgres avtomatik ishga tushadi va DB yaratiladi, `POSTGRES_DSN` ni `.env` ga yozish shart emas.
+- Agar tashqi Postgres ishlatmoqchi bo'lsangiz, `.env` da `POSTGRES_DSN` ni kiriting.
 
 #### API Key'larni qanday olish:
 
@@ -135,53 +127,23 @@ Tokenlarni kiritib bo'lgach `make` ni qayta ishga tushiring. Faqat tayyorgarlikn
 2. "Create API Key" tugmasini bosing
 3. API key ni nusxalang
 
-## 🚚 Deployment (tar.gz)
+### 4. Botni ishga tushiring
 
-1. Toza arxiv yarating (mod cache va maxfiy fayllarsiz):
-   ```bash
-   make dist
-   ```
-2. Arxivni serverga yuboring:
-   ```bash
-   scp upg.tar.gz root@server-ip:/root/
-   ```
-3. Serverda oching va ishga tushiring:
-   ```bash
-   ssh root@server-ip
-   cd /root
-   tar xzf upg.tar.gz
-   cd upg
-   cp .env.example .env   # tokenlarni kiriting
-   make run
-   ```
-
-**Eslatma:** Agar `go/pkg/mod/...@vX.Y.Z` haqida modul path xatosi chiqsa, arxiv ichida tasodifan Go mod cache (`./go/`) qolgan bo‘ladi. Uni o‘chirib qayta deps o‘rnating:
+**Development:**
 ```bash
-rm -rf ./go
-make deps
+go run cmd/bot/main.go
 ```
 
-## 🐳 Docker
-
-Build:
+Yoki Makefile:
 ```bash
-make docker-build          # image: upg-bot:latest
+make run
 ```
 
-Run (env va chat.db uchun volume bilan):
+**Production:**
 ```bash
-make docker-run            # --env-file .env, -v ./data:/data
+make build
+./bot
 ```
-
-Qo'lda:
-```bash
-docker run --rm --name upg-bot \
-  --env-file .env \
-  -v $(pwd)/data:/data \
-  upg-bot:latest
-```
-
-Eslatma: `.env` ni imagega qo'shmang; container ichida `CHAT_DB_PATH=/data/chat.db` default qilib berilgan. Agar webhook ishlatgan bo'lsangiz, run qilishdan oldin uni o'chiring: `curl "https://api.telegram.org/bot<token>/deleteWebhook"`.
 
 ## 🎮 Foydalanish
 
@@ -223,7 +185,7 @@ Bot parol so'raydi:
 🔐 Admin parolini kiriting:
 ```
 
-Parolni kiriting: `@#12`
+Parolni kiriting (`.env` faylda sozlangan parol)
 
 Muvaffaqiyatli login:
 ```
@@ -258,20 +220,29 @@ Endi men ushbu mahsulotlar bilan mijozlarga xizmat ko'rsataman!
 
 #### 3. Admin komandalar
 
+**Katalog boshqaruvi:**
 - `/catalog` - Hozirgi katalog haqida ma'lumot
-```
-📦 Katalog: products.xlsx
-📅 Yangilangan: 2025-01-15 14:30
-📊 Jami mahsulotlar: 45 ta
-
-📂 Kategoriyalar:
-  • CPU: 8 ta
-  • GPU: 12 ta
-  • RAM: 10 ta
-  • SSD: 15 ta
-```
-
 - `/products` - Barcha mahsulotlar ro'yxati
+- `/search` - Mahsulot qidirish (so'rovni keyin yozing yoki `/search <query>` ishlating)
+- `/clean` - Ma'lumotlarni tozalash
+
+**Database (SheetMaster):**
+- `/db_status` - Ulanish holatini ko'rish
+- `/db_sync` - Katalogni yangilash (API → XLSX → katalog + CSV)
+- `/import` - `/db_sync` alias
+- `/database_select` - Import qilinadigan faylni tanlash
+
+**Foydalanuvchilar:**
+- `/online` - Onlayn statistika
+- `/users` - Foydalanuvchilar ro'yxati
+- `/broadcast <xabar>` - Hammaga xabar yuborish
+
+**Buyurtmalar:**
+- `/orders [limit]` - So'nggi buyurtmalar
+- `/top [limit]` - TOP mahsulotlar
+
+**Sozlamalar:**
+- `/val` - Valyuta rejimini o'zgartirish
 - `/logout` - Admin paneldan chiqish
 
 ## 📋 Excel Fayl Formati
@@ -312,18 +283,22 @@ Boshqa barcha ustunlar avtomatik "Texnik xususiyatlar" sifatida saqlanadi.
 type Config struct {
     TelegramToken  string // Telegram bot token
     GeminiAPIKey   string // Gemini API key
-    MaxContextSize int    // Chat tarixida saqlanadigan max xabarlar (default: 20)
-    Group1ChatID   int64  // Ixtiyoriy guruh ID
-    Group2ChatID   int64  // Ixtiyoriy guruh ID
-    ChatDBPath     string // Chat tarix SQLite yo'li (default: ~/.config/upg/chat.db)
+    AdminPassword  string // Admin panel paroli (.env dan)
+    MaxContextSize int    // Chat tarixida saqlanadigan max xabarlar
 }
 ```
 
-`CHAT_DB_PATH` bo'sh qoldirilsa, bot avtomatik ravishda joriy foydalanuvchining config papkasiga (`~/.config/upg/chat.db`) yozadi, shuning uchun har bir foydalanuvchi uchun yo'l moslashadi.
-
-Admin paroli: [internal/usecase/admin_usecase.go:10](internal/usecase/admin_usecase.go#L10)
+**Konstant qiymatlar:** [internal/domain/constants/constants.go](internal/domain/constants/constants.go)
 ```go
-const AdminPassword = "@#12"
+const (
+    DefaultMaxContextSize = 20  // Chat tarixida max xabarlar
+    DefaultSessionTimeout = 24  // Admin session timeout (soat)
+    MaxFileUploadSize = 5MB     // Maksimal fayl hajmi
+    GeminiModelName = "gemini-2.5-flash"
+    AITemperature = 0.3         // AI javob aniqlik darajasi
+    MaxRetries = 3              // AI ga so'rov max urinishlar
+    RetryDelay = 10             // Har bir urinish orasida kutish (s)
+)
 ```
 
 ## 📚 Arxitektura Patternlari
@@ -344,7 +319,16 @@ chatUseCase := usecase.NewChatUseCase(aiRepo, chatRepo, productRepo)
 adminUseCase := usecase.NewAdminUseCase(adminRepo, productRepo, excelParser)
 
 // 3. Delivery layer yaratish
-botHandler := telegram.NewBotHandler(token, chatUseCase, adminUseCase, productUseCase)
+botHandler := telegram.NewBotHandler(
+    token,
+    group1ChatID,      // masalan: -1001234567890 yoki -1001234567890/2 (forum topic)
+    group1ThreadID,    // yuqoridagi qiymatdan olinadi, 0 bo'lsa forum topiksiz
+    group2ChatID,
+    group2ThreadID,
+    chatUseCase,
+    adminUseCase,
+    productUseCase,
+)
 ```
 
 ### Repository Pattern
@@ -431,11 +415,12 @@ Senior Go Developer - Clean Architecture va Best Practices
 
 **Xavfsizlik:**
 
-- Admin parollari xavfsiz saqlanadi
+- Admin paroli `.env` faylda (environment variable)
 - Parol kiritilgan xabar avtomatik o'chiriladi
-- Session timeout: 24 soat
+- Session timeout: 24 soat (avtomatik logout)
 - File upload: Faqat admin
 - Max file size: 5MB
+- Magic numbers va strings constants da
 
 **Performance:**
 

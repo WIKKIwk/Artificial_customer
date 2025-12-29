@@ -8,6 +8,7 @@ type AdminSession struct {
 	IsAdmin      bool
 	LoginTime    time.Time
 	LastActivity time.Time
+	ExpiresAt    time.Time
 }
 
 // AdminAction admin harakatlari

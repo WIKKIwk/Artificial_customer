@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="uz">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animated Logo - Standalone</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            background-color: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: white;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Decorative background glow */
+        .bg-glow {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .glow-1 {
+            position: absolute;
+            top: 20%;
+            left: 20%;
+            width: 40%;
+            height: 40%;
+            background: rgb(88, 28, 135);
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.2;
+            animation: pulse 4s ease-in-out infinite;
+        }
+
+        .glow-2 {
+            position: absolute;
+            bottom: 20%;
+            right: 20%;
+            width: 40%;
+            height: 40%;
+            background: rgb(30, 58, 138);
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.2;
+            animation: pulse 4s ease-in-out infinite;
+            animation-delay: 2s;
+        }
+
+        main {
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4rem;
+            padding: 2rem;
+        }
+
+        /* Logo Container */
+        .logo-container {
+            width: 300px;
+            height: 300px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.7s ease;
+            animation: breathe 6s ease-in-out infinite;
+        }
+
+        .logo-container:hover {
+            transform: scale(1.05);
+        }
+
+        .logo-svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 30px rgba(168, 85, 247, 0.4));
+            animation: hue-shift 12s infinite linear;
+        }
+
+        /* Footer Text */
+        .footer-text {
+            text-align: center;
+            opacity: 0.4;
+            font-size: 0.75rem;
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            font-weight: 300;
+        }
+
+        .footer-copyright {
+            margin-top: 0.5rem;
+            font-size: 0.625rem;
+            color: #6b7280;
+        }
+
+        /* Animations */
+        @keyframes equalizer {
+
+            0%,
+            100% {
+                transform: scaleY(1);
+            }
+
+            50% {
+                transform: scaleY(0.7);
+            }
+        }
+
+        @keyframes equalizer-reverse {
+
+            0%,
+            100% {
+                transform: scaleY(1);
+            }
+
+            50% {
+                transform: scaleY(1.3);
+            }
+        }
+
+        @keyframes breathe {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.02);
+                opacity: 0.95;
+            }
+        }
+
+        @keyframes hue-shift {
+            0% {
+                filter: hue-rotate(0deg) drop-shadow(0 0 30px rgba(168, 85, 247, 0.4));
+            }
+
+            50% {
+                filter: hue-rotate(15deg) drop-shadow(0 0 30px rgba(168, 85, 247, 0.4));
+            }
+
+            100% {
+                filter: hue-rotate(0deg) drop-shadow(0 0 30px rgba(168, 85, 247, 0.4));
+            }
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 0.2;
+            }
+
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        .animate-bar {
+            transform-origin: center;
+            animation: equalizer 2s ease-in-out infinite;
+            transform-box: fill-box;
+        }
+
+        .animate-bar-reverse {
+            transform-origin: center;
+            animation: equalizer-reverse 2s ease-in-out infinite;
+            transform-box: fill-box;
+        }
+
+        /* Responsive scaling */
+        @media (min-width: 768px) {
+            .logo-container {
+                transform: scale(1.25);
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .logo-container {
+                transform: scale(1.5);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Background Glow -->
+    <div class="bg-glow">
+        <div class="glow-1"></div>
+        <div class="glow-2"></div>
+    </div>
+
+    <main>
+        <!-- Logo Container -->
+        <div class="logo-container" id="logoContainer"></div>
+    </main>
+
+    <script>
+        // Logo generation logic
+        function generateLogo() {
+            const numCols = 15;
+            const width = 300;
+            const height = 300;
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const maxRadius = 130;
+
+            const barWidth = 12;
+            const barGap = 6;
+            const cornerRadius = 6;
+
+            let barsHTML = '';
+
+            for (let i = 0; i < numCols; i++) {
+                const xIndex = i - Math.floor(numCols / 2);
+                const xPos = centerX + xIndex * (barWidth + barGap) - (barWidth / 2);
+
+                const xRel = xIndex * (barWidth + barGap);
+                const outerHalfHeight = Math.sqrt(Math.max(0, maxRadius * maxRadius - xRel * xRel));
+
+                const maxGapHalfHeight = 65;
+                let starCurve = Math.pow(1 - Math.min(1, Math.abs(xRel) / 100), 2.8);
+
+                if (Math.abs(xRel) > 90) starCurve = 0;
+
+                const innerGapHalfHeight = maxGapHalfHeight * starCurve;
+                let barHeight = outerHalfHeight - innerGapHalfHeight;
+
+                if (barHeight < 0) barHeight = 0;
+
+                const delay = Math.abs(xIndex) * 0.08;
+                const animClass = xIndex % 2 === 0 ? 'animate-bar' : 'animate-bar-reverse';
+
+                if (barHeight > 1) {
+                    // TOP BAR
+                    barsHTML += `
+                        <rect
+                            x="${xPos}"
+                            y="${centerY - innerGapHalfHeight - barHeight}"
+                            width="${barWidth}"
+                            height="${barHeight}"
+                            rx="${cornerRadius}"
+                            ry="${cornerRadius}"
+                            fill="url(#mainGradient)"
+                            class="${animClass}"
+                            style="animation-delay: ${delay}s;"
+                        />
+                    `;
+
+                    // BOTTOM BAR
+                    barsHTML += `
+                        <rect
+                            x="${xPos}"
+                            y="${centerY + innerGapHalfHeight}"
+                            width="${barWidth}"
+                            height="${barHeight}"
+                            rx="${cornerRadius}"
+                            ry="${cornerRadius}"
+                            fill="url(#mainGradient)"
+                            class="${animClass}"
+                            style="animation-delay: ${delay}s;"
+                        />
+                    `;
+                }
+            }
+
+            const svgHTML = `
+                <svg 
+                    viewBox="0 0 300 300" 
+                    class="logo-svg"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
+                    <defs>
+                        <linearGradient id="mainGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#2563eb" />
+                            <stop offset="30%" stop-color="#7c3aed" />
+                            <stop offset="60%" stop-color="#db2777" />
+                            <stop offset="100%" stop-color="#fbbf24" />
+                        </linearGradient>
+
+                        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="3" result="blur" />
+                            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                        </filter>
+                    </defs>
+
+                    <g>
+                        ${barsHTML}
+                    </g>
+                </svg>
+            `;
+
+            document.getElementById('logoContainer').innerHTML = svgHTML;
+        }
+
+        // Generate logo on page load
+        generateLogo();
+    </script>
+</body>
+
+</html>

@@ -14,9 +14,6 @@ type ChatRepository interface {
 	// GetHistory foydalanuvchi chat tarixini olish
 	GetHistory(ctx context.Context, userID int64, limit int) ([]entity.Message, error)
 
-	// GetAllMessages barcha foydalanuvchi xabarlarini olish (so'nggi limit ta)
-	GetAllMessages(ctx context.Context, limit int) ([]entity.Message, error)
-
 	// ClearHistory foydalanuvchi tarixini tozalash
 	ClearHistory(ctx context.Context, userID int64) error
 

@@ -6,12 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/yourusername/telegram-ai-bot/internal/domain/constants"
 	"github.com/yourusername/telegram-ai-bot/internal/domain/entity"
 	"github.com/yourusername/telegram-ai-bot/internal/domain/repository"
-)
-
-const (
-	AdminPassword = "@#12" // Admin paroli
 )
 
 // AdminUseCase admin bilan bog'liq business logic
@@ -28,6 +25,9 @@ type AdminUseCase interface {
 	// UploadCatalog Excel fayldan katalogni yuklash
 	UploadCatalog(ctx context.Context, userID int64, fileData []byte, filename string) (int, error)
 
+	// UploadCatalogSystem Excel fayldan katalogni admin tekshiruvsiz yuklash
+	UploadCatalogSystem(ctx context.Context, fileData []byte, filename string) (int, error)
+
 	// GetCatalogInfo katalog haqida ma'lumot
 	GetCatalogInfo(ctx context.Context) (string, error)
 
@@ -36,10 +36,11 @@ type AdminUseCase interface {
 }
 
 type adminUseCase struct {
-	adminRepo   repository.AdminRepository
-	productRepo repository.ProductRepository
-	excelParser repository.ExcelParser
-	chatRepo    repository.ChatRepository
+	adminRepo     repository.AdminRepository
+	productRepo   repository.ProductRepository
+	excelParser   repository.ExcelParser
+	chatRepo      repository.ChatRepository
+	adminPassword string
 }
 
 // NewAdminUseCase yangi AdminUseCase yaratish
@@ -48,28 +49,32 @@ func NewAdminUseCase(
 	productRepo repository.ProductRepository,
 	excelParser repository.ExcelParser,
 	chatRepo repository.ChatRepository,
+	adminPassword string,
 ) AdminUseCase {
 	return &adminUseCase{
-		adminRepo:   adminRepo,
-		productRepo: productRepo,
-		excelParser: excelParser,
-		chatRepo:    chatRepo,
+		adminRepo:     adminRepo,
+		productRepo:   productRepo,
+		excelParser:   excelParser,
+		chatRepo:      chatRepo,
+		adminPassword: adminPassword,
 	}
 }
 
 // Login admin login qilish
 func (u *adminUseCase) Login(ctx context.Context, userID int64, password string) (bool, error) {
 	// Parolni tekshirish
-	if password != AdminPassword {
+	if password != u.adminPassword {
 		return false, nil
 	}
 
 	// Admin sessiyasini yaratish
+	now := time.Now()
 	session := entity.AdminSession{
 		UserID:       userID,
 		IsAdmin:      true,
-		LoginTime:    time.Now(),
-		LastActivity: time.Now(),
+		LoginTime:    now,
+		LastActivity: now,
+		ExpiresAt:    now.Add(constants.DefaultSessionTimeout * time.Hour),
 	}
 
 	if err := u.adminRepo.CreateSession(ctx, session); err != nil {
@@ -89,25 +94,16 @@ func (u *adminUseCase) Login(ctx context.Context, userID int64, password string)
 	return true, nil
 }
 
-// Logout admin logout qilish
-func (u *adminUseCase) Logout(ctx context.Context, userID int64) error {
-	return u.adminRepo.DeleteSession(ctx, userID)
-}
-
-// IsAdmin admin ekanligini tekshirish
-func (u *adminUseCase) IsAdmin(ctx context.Context, userID int64) (bool, error) {
-	return u.adminRepo.IsAdmin(ctx, userID)
-}
-
-// UploadCatalog Excel fayldan katalogni yuklash
-func (u *adminUseCase) UploadCatalog(ctx context.Context, userID int64, fileData []byte, filename string) (int, error) {
-	// Admin tekshirish
-	isAdmin, err := u.adminRepo.IsAdmin(ctx, userID)
+func (u *adminUseCase) uploadCatalogInternal(ctx context.Context, fileData []byte, filename string) (int, error) {
+	// Excel faylni CSV ga o'girish
+	csvData, err := u.excelParser.ConvertToCSV(ctx, fileData, filename)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to convert to CSV: %w", err)
 	}
-	if !isAdmin {
-		return 0, fmt.Errorf("user is not admin")
+
+	// CSV ni xotirada saqlash
+	if err := u.productRepo.SaveCSV(ctx, csvData, filename); err != nil {
+		return 0, fmt.Errorf("failed to save CSV: %w", err)
 	}
 
 	// Excel faylni parse qilish
@@ -131,17 +127,64 @@ func (u *adminUseCase) UploadCatalog(ctx context.Context, userID int64, fileData
 		return 0, fmt.Errorf("failed to update catalog: %w", err)
 	}
 
+	return len(products), nil
+}
+
+// Logout admin logout qilish
+func (u *adminUseCase) Logout(ctx context.Context, userID int64) error {
+	return u.adminRepo.DeleteSession(ctx, userID)
+}
+
+// IsAdmin admin ekanligini tekshirish
+func (u *adminUseCase) IsAdmin(ctx context.Context, userID int64) (bool, error) {
+	return u.adminRepo.IsAdmin(ctx, userID)
+}
+
+// UploadCatalog Excel fayldan katalogni yuklash
+func (u *adminUseCase) UploadCatalog(ctx context.Context, userID int64, fileData []byte, filename string) (int, error) {
+	// Admin tekshirish
+	isAdmin, err := u.adminRepo.IsAdmin(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if !isAdmin {
+		return 0, fmt.Errorf("user is not admin")
+	}
+
+	count, err := u.uploadCatalogInternal(ctx, fileData, filename)
+	if err != nil {
+		return 0, err
+	}
+
 	// Upload harakatini loglash
 	action := entity.AdminAction{
 		ID:        uuid.New().String(),
 		UserID:    userID,
 		Action:    "upload_catalog",
-		Details:   fmt.Sprintf("Uploaded %d products from %s", len(products), filename),
+		Details:   fmt.Sprintf("Uploaded %d products from %s (saved as CSV)", count, filename),
 		Timestamp: time.Now(),
 	}
 	_ = u.adminRepo.LogAction(ctx, action)
 
-	return len(products), nil
+	return count, nil
+}
+
+func (u *adminUseCase) UploadCatalogSystem(ctx context.Context, fileData []byte, filename string) (int, error) {
+	count, err := u.uploadCatalogInternal(ctx, fileData, filename)
+	if err != nil {
+		return 0, err
+	}
+
+	action := entity.AdminAction{
+		ID:        uuid.New().String(),
+		UserID:    0,
+		Action:    "auto_import",
+		Details:   fmt.Sprintf("Auto-imported %d products from %s (saved as CSV)", count, filename),
+		Timestamp: time.Now(),
+	}
+	_ = u.adminRepo.LogAction(ctx, action)
+
+	return count, nil
 }
 
 // GetCatalogInfo katalog haqida ma'lumot

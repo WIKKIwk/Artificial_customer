@@ -3,6 +3,7 @@ package parser
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"log"
 	"strconv"
@@ -141,6 +142,14 @@ func (e *excelParser) parseExcelFile(f *excelize.File) ([]entity.Product, error)
 	var products []entity.Product
 	now := time.Now()
 
+	sectionedByCategory := false
+	if hasHeader && !hasCategory {
+		sectionedByCategory = e.detectCategorySectionedFormat(rows, startRow, nameCol, priceCol)
+		if sectionedByCategory {
+			log.Printf("📊 Detected: CATEGORY-SECTION format (Category row + items)")
+		}
+	}
+
 	// Format aniqlash: Standart jadval (nom, narx, ...) yoki Side-by-side (nom1, narx1, nom2, narx2)
 	isTableFormat := true
 	// Header bo'lsa bu jadval formatida deb qabul qilamiz.
@@ -156,11 +165,20 @@ func (e *excelParser) parseExcelFile(f *excelize.File) ([]entity.Product, error)
 
 	// Standart jadval formatini parse qilish
 	if isTableFormat {
+		currentCategory := ""
 		for i := startRow; i < len(rows); i++ {
 			row := rows[i]
 
 			// Bo'sh qatorlarni skip qilish
 			if len(row) == 0 || isEmptyRow(row) {
+				continue
+			}
+
+			// Kategoriya sarlavhasi (alohida qator) - masalan: "CPU", "GPU", ...
+			// new_data_categorized.xlsx kabi fayllar shu formatda bo'lishi mumkin.
+			if sectionedByCategory && e.isCategoryHeadingRow(row, nameCol, priceCol) {
+				currentCategory = e.normalizeCategoryHeading(strings.TrimSpace(row[nameCol]))
+				log.Printf("📁 Category section: %q", currentCategory)
 				continue
 			}
 
@@ -181,6 +199,12 @@ func (e *excelParser) parseExcelFile(f *excelize.File) ([]entity.Product, error)
 			price, err := e.parsePrice(priceStr)
 			if err != nil || price == 0 {
 				log.Printf("⚠️ Row %d: Invalid price '%s' - skipping", i, priceStr)
+				continue
+			}
+
+			// Narx 0 yoki manfiy bo'lsa, o'tkazib yuborish
+			if price <= 0 {
+				log.Printf("⚠️ Row %d: Invalid price '%s' (<= 0) - skipping", i+1, priceStr)
 				continue
 			}
 
@@ -207,6 +231,8 @@ func (e *excelParser) parseExcelFile(f *excelize.File) ([]entity.Product, error)
 				} else {
 					product.Category = e.detectCategory(nameStr)
 				}
+			} else if sectionedByCategory && currentCategory != "" {
+				product.Category = currentCategory
 			} else {
 				product.Category = e.detectCategory(nameStr)
 			}
@@ -344,6 +370,89 @@ func isEmptyRow(row []string) bool {
 		}
 	}
 	return true
+}
+
+func (e *excelParser) detectCategorySectionedFormat(rows [][]string, startRow int, nameCol int, priceCol int) bool {
+	headings := 0
+	checked := 0
+	for i := startRow; i < len(rows) && checked < 200; i++ {
+		row := rows[i]
+		if len(row) == 0 || isEmptyRow(row) {
+			continue
+		}
+		checked++
+		if e.isCategoryHeadingRow(row, nameCol, priceCol) {
+			headings++
+			if headings >= 3 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *excelParser) isCategoryHeadingRow(row []string, nameCol int, priceCol int) bool {
+	if len(row) == 0 || nameCol < 0 || nameCol >= len(row) {
+		return false
+	}
+	head := strings.TrimSpace(row[nameCol])
+	if head == "" {
+		return false
+	}
+	if priceCol >= 0 && priceCol < len(row) && strings.TrimSpace(row[priceCol]) != "" {
+		return false
+	}
+	for idx, v := range row {
+		if idx == nameCol {
+			continue
+		}
+		if strings.TrimSpace(v) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *excelParser) normalizeCategoryHeading(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	l := strings.ToLower(s)
+
+	switch l {
+	case "cpu":
+		return "CPU"
+	case "gpu":
+		return "GPU"
+	case "ram":
+		return "RAM"
+	case "psu":
+		return "PSU"
+	case "ups":
+		return "UPS"
+	case "motherboard":
+		return "Motherboard"
+	case "monitor":
+		return "Monitor"
+	case "case":
+		return "Case"
+	case "cpu cooler", "case fan", "cooler", "cooling":
+		return "Cooling"
+	case "rom", "ssd", "hdd", "storage", "nvme":
+		return "Storage"
+	case "others", "other", "boshqa", "прочее", "другое":
+		return "Others"
+	default:
+		// If it's all caps like "CASE", normalize it a bit for nicer output.
+		if s == strings.ToUpper(s) {
+			low := strings.ToLower(s)
+			if len(low) > 0 {
+				return strings.ToUpper(low[:1]) + low[1:]
+			}
+		}
+		return s
+	}
 }
 
 // detectTableFormat Excel formatini aniqlash
@@ -650,4 +759,49 @@ func (e *excelParser) detectCategory(name string) string {
 	}
 
 	return "Boshqa"
+}
+
+// ConvertToCSV Excel faylni CSV formatga o'girish
+func (e *excelParser) ConvertToCSV(ctx context.Context, data []byte, filename string) (string, error) {
+	reader := bytes.NewReader(data)
+	f, err := excelize.OpenReader(reader)
+	if err != nil {
+		return "", fmt.Errorf("failed to open excel from bytes: %w", err)
+	}
+	defer f.Close()
+
+	// Birinchi sheet ni olish
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return "", fmt.Errorf("excel file has no sheets")
+	}
+
+	sheetName := sheets[0]
+	rows, err := f.GetRows(sheetName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get rows: %w", err)
+	}
+
+	if len(rows) == 0 {
+		return "", fmt.Errorf("excel file is empty")
+	}
+
+	// CSV buffer yaratish
+	var csvBuffer bytes.Buffer
+	csvWriter := csv.NewWriter(&csvBuffer)
+
+	// Barcha qatorlarni CSV ga yozish
+	for _, row := range rows {
+		if err := csvWriter.Write(row); err != nil {
+			return "", fmt.Errorf("failed to write CSV row: %w", err)
+		}
+	}
+
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		return "", fmt.Errorf("CSV writer error: %w", err)
+	}
+
+	log.Printf("✅ Converted Excel to CSV: %d rows", len(rows))
+	return csvBuffer.String(), nil
 }

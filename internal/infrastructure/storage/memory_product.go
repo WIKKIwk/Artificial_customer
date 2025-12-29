@@ -3,19 +3,25 @@ package storage
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
+	"time"
+	"unicode"
 
 	"github.com/yourusername/telegram-ai-bot/internal/domain/entity"
 	"github.com/yourusername/telegram-ai-bot/internal/domain/repository"
 )
 
 type memoryProductRepository struct {
-	mu       sync.RWMutex
-	products map[string]entity.Product // key: product ID
-	catalog  *entity.ProductCatalog
+	mu          sync.RWMutex
+	products    map[string]entity.Product // key: product ID
+	catalog     *entity.ProductCatalog
+	csvData     string // CSV ma'lumotlari
+	csvFilename string // CSV fayl nomi
 }
 
 // NewMemoryProductRepository in-memory product repository yaratish
@@ -58,100 +64,480 @@ func (m *memoryProductRepository) GetByID(ctx context.Context, id string) (*enti
 	return &product, nil
 }
 
+var searchNormalizeRe = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+
+func transliterateToLatin(input string) string {
+	var b strings.Builder
+	b.Grow(len(input))
+	for _, r := range input {
+		switch r {
+		case '\u0430':
+			b.WriteByte('a')
+		case '\u0431':
+			b.WriteByte('b')
+		case '\u0432':
+			b.WriteByte('v')
+		case '\u0433':
+			b.WriteByte('g')
+		case '\u0434':
+			b.WriteByte('d')
+		case '\u0435':
+			b.WriteByte('e')
+		case '\u0451':
+			b.WriteString("yo")
+		case '\u0436':
+			b.WriteString("zh")
+		case '\u0437':
+			b.WriteByte('z')
+		case '\u0438':
+			b.WriteByte('i')
+		case '\u0439':
+			b.WriteByte('y')
+		case '\u043a':
+			b.WriteByte('k')
+		case '\u043b':
+			b.WriteByte('l')
+		case '\u043c':
+			b.WriteByte('m')
+		case '\u043d':
+			b.WriteByte('n')
+		case '\u043e':
+			b.WriteByte('o')
+		case '\u043f':
+			b.WriteByte('p')
+		case '\u0440':
+			b.WriteByte('r')
+		case '\u0441':
+			b.WriteByte('s')
+		case '\u0442':
+			b.WriteByte('t')
+		case '\u0443':
+			b.WriteByte('u')
+		case '\u0444':
+			b.WriteByte('f')
+		case '\u0445':
+			b.WriteByte('h')
+		case '\u0446':
+			b.WriteString("ts")
+		case '\u0447':
+			b.WriteString("ch")
+		case '\u0448':
+			b.WriteString("sh")
+		case '\u0449':
+			b.WriteString("shch")
+		case '\u044a', '\u044c':
+			continue
+		case '\u044b':
+			b.WriteByte('y')
+		case '\u044d':
+			b.WriteByte('e')
+		case '\u044e':
+			b.WriteString("yu")
+		case '\u044f':
+			b.WriteString("ya")
+		case '\u0454':
+			b.WriteString("ye")
+		case '\u0456':
+			b.WriteByte('i')
+		case '\u0457':
+			b.WriteString("yi")
+		case '\u049b':
+			b.WriteByte('q')
+		case '\u0491':
+			b.WriteByte('g')
+		case '\u0493':
+			b.WriteByte('g')
+		case '\u045e':
+			b.WriteByte('o')
+		case '\u04d9':
+			b.WriteByte('a')
+		case '\u04e9':
+			b.WriteByte('o')
+		case '\u04af':
+			b.WriteByte('u')
+		case '\u04b1':
+			b.WriteByte('u')
+		case '\u04b3':
+			b.WriteByte('h')
+		case '\u04bb':
+			b.WriteByte('h')
+		case '\u04a3':
+			b.WriteString("ng")
+		case '\u02bc', '\u2019', '\'':
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func normalizeSearchText(input string) string {
+	input = strings.ToLower(input)
+	input = transliterateToLatin(input)
+	input = searchNormalizeRe.ReplaceAllString(input, " ")
+	return strings.TrimSpace(input)
+}
+
+func compactSearchText(input string) string {
+	input = strings.ToLower(input)
+	input = transliterateToLatin(input)
+	return searchNormalizeRe.ReplaceAllString(input, "")
+}
+
+func buildProductSearchText(product entity.Product) string {
+	var b strings.Builder
+	b.WriteString(product.Name)
+	b.WriteString(" ")
+	b.WriteString(product.Category)
+	b.WriteString(" ")
+	b.WriteString(product.Description)
+	for key, value := range product.Specs {
+		if key != "" {
+			b.WriteString(" ")
+			b.WriteString(key)
+		}
+		if value != "" {
+			b.WriteString(" ")
+			b.WriteString(value)
+		}
+	}
+	return b.String()
+}
+
+func isVowel(r rune) bool {
+	switch r {
+	case 'a', 'e', 'i', 'o', 'u', 'y':
+		return true
+	default:
+		return false
+	}
+}
+
+func consonantSignature(input string) string {
+	var b strings.Builder
+	prev := rune(0)
+	for i, r := range input {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			continue
+		}
+		if unicode.IsLetter(r) && isVowel(r) && i > 0 {
+			continue
+		}
+		if r == prev {
+			continue
+		}
+		b.WriteRune(r)
+		prev = r
+	}
+	return b.String()
+}
+
+func ngramSet(input string, n int) map[string]struct{} {
+	if n <= 0 {
+		return nil
+	}
+	runes := []rune(input)
+	if len(runes) == 0 {
+		return nil
+	}
+	if len(runes) < n {
+		return map[string]struct{}{string(runes): {}}
+	}
+	set := make(map[string]struct{}, len(runes)-n+1)
+	for i := 0; i <= len(runes)-n; i++ {
+		set[string(runes[i:i+n])] = struct{}{}
+	}
+	return set
+}
+
+func ngramSimilarity(a, b string, n int) float64 {
+	setA := ngramSet(a, n)
+	setB := ngramSet(b, n)
+	if len(setA) == 0 || len(setB) == 0 {
+		return 0
+	}
+	inter := 0
+	for gram := range setA {
+		if _, ok := setB[gram]; ok {
+			inter++
+		}
+	}
+	union := len(setA) + len(setB) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
+func hasLetter(token string) bool {
+	for _, r := range token {
+		if unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func maxEditDistance(token string) int {
+	l := len([]rune(token))
+	switch {
+	case l <= 3:
+		return 0
+	case l <= 5:
+		return 1
+	case l <= 8:
+		return 2
+	case l <= 12:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func min3(a, b, c int) int {
+	return minInt(minInt(a, b), c)
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func editDistanceWithin(a, b string, max int) (int, bool) {
+	if max < 0 {
+		return 0, false
+	}
+	if a == b {
+		return 0, true
+	}
+	ra := []rune(a)
+	rb := []rune(b)
+	if len(ra) == 0 {
+		if len(rb) <= max {
+			return len(rb), true
+		}
+		return 0, false
+	}
+	if len(rb) == 0 {
+		if len(ra) <= max {
+			return len(ra), true
+		}
+		return 0, false
+	}
+	if absInt(len(ra)-len(rb)) > max {
+		return 0, false
+	}
+	if len(rb) > len(ra) {
+		ra, rb = rb, ra
+	}
+
+	prev := make([]int, len(rb)+1)
+	curr := make([]int, len(rb)+1)
+	for j := 0; j <= len(rb); j++ {
+		prev[j] = j
+	}
+
+	for i, raChar := range ra {
+		curr[0] = i + 1
+		minRow := curr[0]
+		for j, rbChar := range rb {
+			cost := 0
+			if raChar != rbChar {
+				cost = 1
+			}
+			del := prev[j+1] + 1
+			ins := curr[j] + 1
+			sub := prev[j] + cost
+			v := min3(del, ins, sub)
+			curr[j+1] = v
+			if v < minRow {
+				minRow = v
+			}
+		}
+		if minRow > max {
+			return 0, false
+		}
+		prev, curr = curr, prev
+	}
+
+	dist := prev[len(rb)]
+	if dist <= max {
+		return dist, true
+	}
+	return 0, false
+}
+
 // Search mahsulot qidirish
 func (m *memoryProductRepository) Search(ctx context.Context, query string) ([]entity.Product, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
+	normalizedQuery := normalizeSearchText(query)
+	compactQuery := compactSearchText(query)
+	if normalizedQuery == "" && compactQuery == "" {
 		return nil, nil
 	}
-	queryNorm := normalizeProductString(query)
-	tokens := filterTokens(queryTokens(query))
-	tokensNorm := normalizeTokens(tokens)
-	compactQuery := normalizeAlphaNum(query)
-	queryDigits := extractDigits(query)
-	gpuQuery := isGPUQuery(query)
-	var results []entity.Product
-	var scored []scoredProduct
+	queryTokens := strings.Fields(normalizedQuery)
+	compactQueryLen := len([]rune(compactQuery))
+	querySignature := consonantSignature(normalizedQuery)
+
+	type scoredProduct struct {
+		product entity.Product
+		score   int
+	}
+	var matches []scoredProduct
 
 	for _, product := range m.products {
-		nameLower := strings.ToLower(product.Name)
-		catLower := strings.ToLower(product.Category)
-		descLower := strings.ToLower(product.Description)
-		nameNorm := normalizeProductString(product.Name)
-		nameCompact := normalizeAlphaNum(product.Name)
-		catNorm := normalizeAlphaNum(product.Category)
-		descNorm := normalizeAlphaNum(product.Description)
+		searchText := buildProductSearchText(product)
+		textNorm := normalizeSearchText(searchText)
+		textCompact := compactSearchText(searchText)
+		nameNorm := normalizeSearchText(product.Name)
+		nameCompact := compactSearchText(product.Name)
+		textTokens := strings.Fields(textNorm)
+		textSignature := consonantSignature(textNorm)
+		nameSignature := consonantSignature(nameNorm)
 
-		// Name, category, description da qidirish
-		if strings.Contains(nameLower, query) ||
-			strings.Contains(catLower, query) ||
-			strings.Contains(descLower, query) ||
-			(queryNorm != "" && strings.Contains(nameNorm, queryNorm)) ||
-			(compactQuery != "" && strings.Contains(nameCompact, compactQuery)) ||
-			matchTokens(tokens, nameLower, catLower, descLower, nameCompact, nameNorm) ||
-			matchTokens(tokensNorm, nameNorm, nameCompact, catNorm, descNorm) {
-			results = append(results, product)
-			continue
+		score := 0
+		if normalizedQuery != "" {
+			if strings.Contains(nameNorm, normalizedQuery) {
+				score += 120
+			} else if strings.Contains(textNorm, normalizedQuery) {
+				score += 100
+			}
 		}
-
-		// Raqamga qat'iy moslik
-		if queryDigits != "" {
-			nameDigits := extractDigits(nameNorm)
-			if nameDigits != "" && strings.Contains(nameDigits, queryDigits) {
-				results = append(results, product)
-				continue
+		if compactQuery != "" {
+			if strings.Contains(nameCompact, compactQuery) {
+				score += 110
+			} else if strings.Contains(textCompact, compactQuery) {
+				score += 90
+			}
+		}
+		if compactQuery != "" && compactQueryLen >= 4 {
+			sim := ngramSimilarity(compactQuery, nameCompact, 2)
+			if sim >= 0.35 {
+				score += int(sim * 80)
+			} else if sim >= 0.25 {
+				score += int(sim * 50)
+			}
+		}
+		if len(querySignature) >= 3 {
+			if strings.Contains(nameSignature, querySignature) {
+				score += 60
+			} else if strings.Contains(textSignature, querySignature) {
+				score += 40
 			}
 		}
 
-		// Specs da qidirish
-		for _, value := range product.Specs {
-			if strings.Contains(strings.ToLower(value), query) {
-				results = append(results, product)
-				break
+		if len(queryTokens) > 0 && len(textTokens) > 0 {
+			tokenSet := make(map[string]struct{}, len(textTokens))
+			tokenList := make([]string, 0, len(textTokens))
+			tokenSignatureSet := make(map[string]struct{}, len(textTokens))
+			for _, t := range textTokens {
+				if t == "" {
+					continue
+				}
+				if _, ok := tokenSet[t]; ok {
+					continue
+				}
+				tokenSet[t] = struct{}{}
+				tokenList = append(tokenList, t)
+				if sig := consonantSignature(t); len(sig) >= 3 {
+					tokenSignatureSet[sig] = struct{}{}
+				}
+			}
+			for _, qt := range queryTokens {
+				if len(qt) < 2 {
+					continue
+				}
+				if _, ok := tokenSet[qt]; ok {
+					score += 12
+					continue
+				}
+				matched := false
+				if len(qt) >= 2 {
+					for _, tt := range tokenList {
+						if strings.HasPrefix(tt, qt) {
+							score += 8
+							matched = true
+							break
+						}
+					}
+				}
+				if matched {
+					continue
+				}
+				if len(qt) >= 3 {
+					for _, tt := range tokenList {
+						if strings.Contains(tt, qt) {
+							score += 4
+							matched = true
+							break
+						}
+					}
+				}
+				if matched {
+					continue
+				}
+				if !hasLetter(qt) {
+					continue
+				}
+				maxEdits := maxEditDistance(qt)
+				if maxEdits == 0 {
+					continue
+				}
+				bestDist := 0
+				found := false
+				for _, tt := range tokenList {
+					dist, ok := editDistanceWithin(qt, tt, maxEdits)
+					if !ok {
+						continue
+					}
+					if !found || dist < bestDist {
+						found = true
+						bestDist = dist
+						if bestDist == 0 {
+							break
+						}
+					}
+				}
+				if found {
+					score += 6 + (maxEdits - bestDist)
+					continue
+				}
+				if sig := consonantSignature(qt); len(sig) >= 3 {
+					if _, ok := tokenSignatureSet[sig]; ok {
+						score += 5
+					}
+				}
 			}
 		}
 
-		// Ballar berib o'xshashlikni aniqlaymiz (faqat minimal ball bo'lsa qo'shamiz)
-		score := similarityScore(tokensNorm, compactQuery, nameNorm, nameCompact, catNorm, descNorm)
-		if score >= 5 { // Minimal ball talabi - faqat chindan ham o'xshashlarini olish
-			scored = append(scored, scoredProduct{Product: product, Score: score})
+		if score > 0 {
+			matches = append(matches, scoredProduct{product: product, score: score})
 		}
 	}
 
-	// Agar to'g'ridan-to'g'ri topilmasa, yaxshi ball olganlarni qaytaramiz
-	if len(results) == 0 && len(scored) > 0 {
-		sort.Slice(scored, func(i, j int) bool {
-			if scored[i].Score == scored[j].Score {
-				return scored[i].Product.Price < scored[j].Product.Price
-			}
-			return scored[i].Score > scored[j].Score
-		})
-		// Faqat eng yaxshi 6 ta va ball >= 8 bo'lganlarni qo'shamiz
-		for _, sp := range scored {
-			if sp.Score >= 8 && len(results) < 6 {
-				results = append(results, sp.Product)
-			}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].score == matches[j].score {
+			return matches[i].product.Name < matches[j].product.Name
 		}
-	}
+		return matches[i].score > matches[j].score
+	})
 
-	// GPU so'rovi bo'lsa, natijani GPU ga filtrlaymiz
-	if gpuQuery && len(results) > 0 {
-		filtered := make([]entity.Product, 0, len(results))
-		for _, p := range results {
-			if isGPUProduct(p) {
-				filtered = append(filtered, p)
-			}
-		}
-		if len(filtered) > 0 {
-			results = filtered
-		}
+	results := make([]entity.Product, len(matches))
+	for i, match := range matches {
+		results[i] = match.product
 	}
-
-	// MUHIM: Agar hech narsa topilmasa, bo'sh massiv qaytaramiz
-	// Tasodifiy mahsulotlar ko'rsatmaydi!
 	return results, nil
 }
 
@@ -221,203 +607,49 @@ func (m *memoryProductRepository) Clear(ctx context.Context) error {
 
 	m.products = make(map[string]entity.Product)
 	m.catalog = nil
+	m.csvData = ""
+	m.csvFilename = ""
 	return nil
 }
 
-// Qidiruv yordamchi funksiyalar
-func normalizeProductString(s string) string {
-	s = strings.ToLower(s)
-	replacements := []string{" ", "-", "_", ".", ",", "'", "\"", "/", "\\", "?", "!"}
-	for _, r := range replacements {
-		s = strings.ReplaceAll(s, r, "")
+// SaveCSV CSV ma'lumotlarini faylga saqlash
+func (m *memoryProductRepository) SaveCSV(ctx context.Context, csvData string, filename string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Xotirada ham saqlash
+	m.csvData = csvData
+	m.csvFilename = filename
+
+	// data/catalogs papkani yaratish
+	catalogDir := "data/catalogs"
+	if err := os.MkdirAll(catalogDir, 0755); err != nil {
+		return fmt.Errorf("failed to create catalog directory: %w", err)
 	}
-	return s
+
+	// CSV fayl nomini yaratish (timestamp bilan)
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	// Original fayl nomidan kengaytmani olib tashlash va .csv qo'shish
+	baseFilename := strings.TrimSuffix(filename, filepath.Ext(filename))
+	csvFilename := fmt.Sprintf("%s_%s.csv", baseFilename, timestamp)
+	csvFilePath := filepath.Join(catalogDir, csvFilename)
+
+	// CSV ni faylga yozish
+	if err := os.WriteFile(csvFilePath, []byte(csvData), 0644); err != nil {
+		return fmt.Errorf("failed to write CSV file: %w", err)
+	}
+
+	return nil
 }
 
-func queryTokens(q string) []string {
-	q = strings.ToLower(q)
-	separators := []string{",", ".", "?", "!", ";", ":", "/", "\\", "-", "_"}
-	for _, sep := range separators {
-		q = strings.ReplaceAll(q, sep, " ")
-	}
-	fields := strings.Fields(q)
+// GetCSV saqlangan CSV ma'lumotlarini olish
+func (m *memoryProductRepository) GetCSV(ctx context.Context) (string, string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	var tokens []string
-	for _, f := range fields {
-		if len(f) >= 2 {
-			tokens = append(tokens, f)
-		}
-	}
-	return tokens
-}
-
-func matchTokens(tokens []string, parts ...string) bool {
-	if len(tokens) == 0 {
-		return false
-	}
-	for _, t := range tokens {
-		for _, p := range parts {
-			if strings.Contains(p, t) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func normalizeAlphaNum(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		}
-	}
-	return strings.ToLower(b.String())
-}
-
-func filterTokens(tokens []string) []string {
-	stop := map[string]struct{}{
-		"bormi": {}, "bor": {}, "bormidi": {}, "bormi?": {}, "bormidi?": {},
-		"kerak": {}, "kerakmi": {}, "kerak?": {}, "qachon": {}, "qanday": {},
-	}
-	var out []string
-	for _, t := range tokens {
-		if _, skip := stop[t]; skip {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
-}
-
-func normalizeTokens(tokens []string) []string {
-	var out []string
-	for _, t := range tokens {
-		n := normalizeAlphaNum(t)
-		if n != "" {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-type scoredProduct struct {
-	Product entity.Product
-	Score   int
-}
-
-func similarityScore(qTokens []string, compactQuery, nameNorm, nameCompact, catNorm, descNorm string) int {
-	score := 0
-
-	// Tokenlarga asoslangan
-	for _, qt := range qTokens {
-		if qt == "" {
-			continue
-		}
-		if strings.Contains(nameNorm, qt) || strings.Contains(nameCompact, qt) {
-			score += 4
-			continue
-		}
-		if strings.Contains(catNorm, qt) || strings.Contains(descNorm, qt) {
-			score += 2
-			continue
-		}
-
-		// Raqamlar yaqinligi (masalan 5090 -> 4090)
-		qNum := extractNumber(qt)
-		pNum := extractNumber(nameNorm)
-		if qNum > 0 && pNum > 0 {
-			diff := qNum - pNum
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff <= 200 { // GPU modellari yaqin
-				score += 2
-			}
-		}
+	if m.csvData == "" {
+		return "", "", fmt.Errorf("CSV data not found")
 	}
 
-	// Umumiy harf-raqam chiziqli o'xshashlik
-	if compactQuery != "" {
-		lcs := longestCommonSubstringLength(compactQuery, nameCompact)
-		if lcs >= 3 {
-			score += lcs
-		}
-	}
-
-	return score
-}
-
-func extractNumber(s string) int {
-	numStr := ""
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			numStr += string(r)
-		}
-	}
-	if numStr == "" {
-		return 0
-	}
-	val, _ := strconv.Atoi(numStr)
-	return val
-}
-
-func extractDigits(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-func isGPUQuery(q string) bool {
-	lower := strings.ToLower(q)
-	digits := extractDigits(lower)
-	return strings.Contains(lower, "rtx") ||
-		strings.Contains(lower, "gtx") ||
-		strings.Contains(lower, "rx ") ||
-		strings.Contains(lower, "rx-") ||
-		strings.Contains(lower, "rx") && digits != "" ||
-		len(digits) >= 3 ||
-		strings.Contains(lower, "gpu") ||
-		strings.Contains(lower, "video") ||
-		strings.Contains(lower, "videokarta") ||
-		strings.Contains(lower, "karta")
-}
-
-func isGPUProduct(p entity.Product) bool {
-	name := strings.ToLower(p.Name)
-	cat := strings.ToLower(p.Category)
-	if strings.Contains(cat, "gpu") || strings.Contains(cat, "video") || strings.Contains(cat, "karta") || strings.Contains(cat, "videokarta") {
-		return true
-	}
-	if strings.Contains(name, "rtx") || strings.Contains(name, "gtx") || strings.Contains(name, "rx ") || strings.Contains(name, "rx-") || strings.Contains(name, "gpu") || strings.Contains(name, "video") {
-		return true
-	}
-	digits := extractDigits(name)
-	return len(digits) >= 3 && (strings.Contains(name, "nvidia") || strings.Contains(name, "amd"))
-}
-
-func longestCommonSubstringLength(a, b string) int {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	dp := make([][]int, len(a)+1)
-	for i := range dp {
-		dp[i] = make([]int, len(b)+1)
-	}
-	maxLen := 0
-	for i := 1; i <= len(a); i++ {
-		for j := 1; j <= len(b); j++ {
-			if a[i-1] == b[j-1] {
-				dp[i][j] = dp[i-1][j-1] + 1
-				if dp[i][j] > maxLen {
-					maxLen = dp[i][j]
-				}
-			}
-		}
-	}
-	return maxLen
+	return m.csvData, m.csvFilename, nil
 }

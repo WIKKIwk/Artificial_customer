@@ -1,0 +1,359 @@
+package main
+
+import (
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/xuri/excelize/v2"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+// User model for authentication
+type User struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `gorm:"uniqueIndex" json:"email"`
+	Password  string    `json:"-"` // Never return password in JSON
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SpreadsheetData represents the model stored in the database
+type SpreadsheetData struct {
+	ID        uint            `gorm:"primaryKey"`
+	UserID    uint            `json:"user_id"`
+	Filename  string          `json:"filename"`
+	RowData   json.RawMessage `gorm:"type:jsonb" json:"row_data"` // Store row as JSON for flexibility
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// JWT Claims
+type Claims struct {
+	UserID uint   `json:"user_id"`
+	Email  string `json:"email"`
+	jwt.RegisteredClaims
+}
+
+var db *gorm.DB
+var jwtSecret = []byte(getEnv("JWT_SECRET", "your-secret-key-change-this"))
+
+// Helper function to get environment variables with default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func initDB() {
+	dsn := getEnv("DB_DSN", "host=localhost user=user password=password dbname=converter_db port=5439 sslmode=disable")
+	var err error
+	maxAttempts := 10
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err == nil {
+			sqlDB, pingErr := db.DB()
+			if pingErr == nil {
+				pingErr = sqlDB.Ping()
+			}
+			if pingErr == nil {
+				break
+			}
+			err = pingErr
+		}
+		log.Printf("Database connection attempt %d/%d failed: %v", attempt, maxAttempts, err)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		log.Fatalf("Failed to connect to database after %d attempts: %v", maxAttempts, err)
+	}
+
+	// Auto Migrate the schema
+	db.AutoMigrate(&User{}, &SpreadsheetData{})
+	fmt.Println("Database connected and migrated!")
+}
+
+// Generate JWT token
+func generateToken(user *User) (string, error) {
+	expirationTime := time.Now().Add(24 * time.Hour)
+	claims := &Claims{
+		UserID: user.ID,
+		Email:  user.Email,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
+}
+
+// Validate JWT token
+func validateToken(tokenString string) (*Claims, error) {
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return jwtSecret, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+
+	return claims, nil
+}
+
+// Auth middleware
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+			c.Abort()
+			return
+		}
+
+		// Extract token from "Bearer <token>"
+		tokenString := authHeader
+		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			tokenString = authHeader[7:]
+		}
+
+		claims, err := validateToken(tokenString)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		// Store user ID in context
+		c.Set("user_id", claims.UserID)
+		c.Next()
+	}
+}
+
+// Register handler
+func registerHandler(c *gin.Context) {
+	var input struct {
+		Name     string `json:"name" binding:"required"`
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=6"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if user already exists
+	var existingUser User
+	if err := db.Where("email = ?", input.Email).First(&existingUser).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		return
+	}
+
+	// Create user
+	user := User{
+		Name:     input.Name,
+		Email:    input.Email,
+		Password: string(hashedPassword),
+	}
+
+	if err := db.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+		return
+	}
+
+	// Generate token
+	token, err := generateToken(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":    user.ID,
+			"name":  user.Name,
+			"email": user.Email,
+		},
+	})
+}
+
+// Login handler
+func loginHandler(c *gin.Context) {
+	var input struct {
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Find user
+	var user User
+	if err := db.Where("email = ?", input.Email).First(&user).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		return
+	}
+
+	// Check password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		return
+	}
+
+	// Generate token
+	token, err := generateToken(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":    user.ID,
+			"name":  user.Name,
+			"email": user.Email,
+		},
+	})
+}
+
+// Get current user handler
+func meHandler(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var user User
+	if err := db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":    user.ID,
+		"name":  user.Name,
+		"email": user.Email,
+	})
+}
+
+func main() {
+	// Initialize Database
+	initDB()
+
+	r := gin.Default()
+
+	// Enable CORS
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5500", "http://127.0.0.1:5500", "http://localhost:8000", "http://localhost:5173", "http://localhost:8001"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length", "Content-Disposition", "X-Db-Saved"},
+		AllowCredentials: true,
+	}))
+
+	// Auth routes (no middleware)
+	r.POST("/api/register", registerHandler)
+	r.POST("/api/login", loginHandler)
+
+	// Protected routes
+	protected := r.Group("/api")
+	protected.Use(authMiddleware())
+	{
+		protected.GET("/me", meHandler)
+	}
+
+	r.POST("/convert", func(c *gin.Context) {
+		// Get the file from the request
+		file, err := c.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+			return
+		}
+
+		filename := filepath.Base(file.Filename)
+		dst := filepath.Join("/tmp", filename)
+		if err := c.SaveUploadedFile(file, dst); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+			return
+		}
+
+		// Open the Excel file
+		f, err := excelize.OpenFile(dst)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open Excel file"})
+			return
+		}
+		defer f.Close()
+
+		// Get all rows in the first sheet
+		sheetName := f.GetSheetName(0)
+		rows, err := f.GetRows(sheetName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get rows"})
+			return
+		}
+
+		// Save to Database (Async to not block download too much, or sync for safety)
+		// For this demo, we'll do it synchronously to ensure it works
+		go func(fname string, data [][]string) {
+			for _, row := range data {
+				jsonData, _ := json.Marshal(row)
+				record := SpreadsheetData{
+					Filename: fname,
+					RowData:  jsonData,
+				}
+				db.Create(&record)
+			}
+			fmt.Printf("Saved %d rows to database for %s\n", len(data), fname)
+		}(filename, rows)
+
+		// Set headers for CSV download
+		c.Header("Content-Description", "File Transfer")
+		c.Header("Content-Transfer-Encoding", "binary")
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.csv", filename))
+		c.Header("Content-Type", "text/csv")
+		c.Header("X-Db-Saved", "true") // Signal to clients that the row was persisted
+
+		// Stream CSV response
+		writer := csv.NewWriter(c.Writer)
+		for _, row := range rows {
+			if err := writer.Write(row); err != nil {
+				fmt.Println("Error writing row:", err)
+				return
+			}
+		}
+		writer.Flush()
+	})
+
+	r.Run(":8080")
+}

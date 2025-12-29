@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -66,28 +65,10 @@ func (m *memoryChatRepository) GetHistory(ctx context.Context, userID int64, lim
 		messages = messages[len(messages)-limit:]
 	}
 
-	return messages, nil
-}
-
-// GetAllMessages barcha xabarlarni olish
-func (m *memoryChatRepository) GetAllMessages(ctx context.Context, limit int) ([]entity.Message, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var all []entity.Message
-	for _, ctx := range m.contexts {
-		all = append(all, ctx.Messages...)
-	}
-
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].Timestamp.After(all[j].Timestamp)
-	})
-
-	if limit > 0 && len(all) > limit {
-		all = all[:limit]
-	}
-
-	return all, nil
+	// Return a defensive copy so callers can safely iterate without holding the lock.
+	out := make([]entity.Message, len(messages))
+	copy(out, messages)
+	return out, nil
 }
 
 // ClearHistory foydalanuvchi tarixini tozalash

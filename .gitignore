@@ -26,6 +26,17 @@ go.work
 .env
 data/
 
+# Local caches
+.gocache/
+.gomodcache/
+
+# Local-only files
+new_data_categorized.xlsx
+nul
+
+# Assistant configs
+.claude/
+
 # IDE
 .vscode/
 .idea/
