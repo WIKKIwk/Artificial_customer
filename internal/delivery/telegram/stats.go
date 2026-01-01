@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -50,13 +51,37 @@ func (h *BotHandler) handleStatsCommand(ctx context.Context, message *tgbotapi.M
 	const maxOrdersForStats = 10000
 	orders := h.listRecentOrders(maxOrdersForStats)
 
+	dayStart, dayEnd, dayLabel, err := parseStatsDayRange(message.CommandArguments(), time.Now())
+	if err != nil {
+		h.sendMessage(message.Chat.ID, t(lang,
+			"❌ Sana formati noto'g'ri. Misol: /stats 2026-01-01 yoki /stats bugun yoki /stats kecha",
+			"❌ Неверный формат даты. Пример: /stats 2026-01-01 или /stats today или /stats yesterday",
+		))
+		return
+	}
+
 	counts := make(map[string]int)
+	var dayOrders, dayCanceled, dayComponents int
 	for _, ord := range orders {
 		st := strings.TrimSpace(ord.Status)
 		if st == "" {
 			st = "processing"
 		}
 		counts[st]++
+
+		if ord.CreatedAt.IsZero() {
+			continue
+		}
+		created := ord.CreatedAt.In(time.Local)
+		if created.Before(dayStart) || !created.Before(dayEnd) {
+			continue
+		}
+		dayOrders++
+		if st == "canceled" {
+			dayCanceled++
+			continue
+		}
+		dayComponents += len(extractComponentsForStats(ord.Summary))
 	}
 
 	processing := counts["processing"]
@@ -83,8 +108,53 @@ func (h *BotHandler) handleStatsCommand(ctx context.Context, message *tgbotapi.M
 	sb.WriteString(fmt.Sprintf("❌ %s: *%d*\n", t(lang, "Bekor qilingan", "Отменённые"), canceled))
 
 	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("📅 %s: *%s* (%s)\n",
+		t(lang, "Sana", "Дата"),
+		dayLabel,
+		time.Local.String(),
+	))
+	sb.WriteString(fmt.Sprintf("🧩 %s: *%d*\n", t(lang, "Sotilgan komponentlar", "Продано компонентов"), dayComponents))
+	sb.WriteString(fmt.Sprintf("🛒 %s: *%d*\n", t(lang, "Buyurtmalar (shu kunda)", "Заказов (за день)"), dayOrders))
+	sb.WriteString(fmt.Sprintf("❌ %s: *%d*\n", t(lang, "Bekor qilingan (shu kunda)", "Отменено (за день)"), dayCanceled))
+
+	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf("%s: *%d*\n", t(lang, "Jami buyurtmalar", "Всего заказов"), len(orders)))
 
 	h.sendMessageMarkdown(message.Chat.ID, sb.String())
 }
 
+func parseStatsDayRange(rawArg string, now time.Time) (time.Time, time.Time, string, error) {
+	arg := strings.TrimSpace(rawArg)
+	if arg != "" {
+		arg = strings.Fields(arg)[0]
+	}
+	now = now.In(time.Local)
+	switch strings.ToLower(arg) {
+	case "", "today", "bugun", "сегодня":
+		year, month, day := now.Date()
+		start := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+		return start, start.AddDate(0, 0, 1), start.Format("2006-01-02"), nil
+	case "yesterday", "kecha", "вчера":
+		t := now.AddDate(0, 0, -1)
+		year, month, day := t.Date()
+		start := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+		return start, start.AddDate(0, 0, 1), start.Format("2006-01-02"), nil
+	}
+
+	for _, layout := range []string{"2006-01-02", "02.01.2006", "02/01/2006"} {
+		if t, err := time.ParseInLocation(layout, arg, time.Local); err == nil {
+			year, month, day := t.Date()
+			start := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+			return start, start.AddDate(0, 0, 1), start.Format("2006-01-02"), nil
+		}
+	}
+	return time.Time{}, time.Time{}, "", fmt.Errorf("invalid date: %q", arg)
+}
+
+func extractComponentsForStats(summary string) []string {
+	items := extractConfigItemNames(summary)
+	if len(items) == 0 {
+		items = extractOrderItemNames(summary)
+	}
+	return items
+}

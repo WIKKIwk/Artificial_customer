@@ -5,7 +5,8 @@
 *.so
 *.dylib
 telegram-ai-bot
-bot
+/bot
+bin/
 upg.tar.gz
 *.tar.gz
 go/

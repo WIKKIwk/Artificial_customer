@@ -15,6 +15,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-upg_db}
       # Allow the bot container to start even if secrets are missing.
       ALLOW_EMPTY_SECRETS: ${ALLOW_EMPTY_SECRETS:-1}
+      # Default timezone (for logs and any system-level calls).
+      TZ: ${TZ:-Asia/Tashkent}
       # SheetMaster (database) API (when started via `make run`)
       SHEETMASTER_API_BASE_URL: ${SHEETMASTER_API_BASE_URL:-http://backend-go:8080}
       # Realtime bridge (updates SheetMaster UI after DB changes)
