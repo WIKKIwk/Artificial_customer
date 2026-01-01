@@ -88,6 +88,62 @@ func (h *BotHandler) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 		return
 	}
 
+	if data == "hisobot_menu" {
+		h.handleHisobotMenuCallback(ctx, chatID, userID, cq.Message)
+		return
+	}
+
+	if strings.HasPrefix(data, "hisobot_mode|") {
+		raw := strings.TrimPrefix(data, "hisobot_mode|")
+		parts := strings.Split(raw, "|")
+		mode := ""
+		page := 0
+		if len(parts) >= 1 {
+			mode = strings.TrimSpace(parts[0])
+		}
+		if len(parts) >= 2 {
+			if v, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+				page = v
+			}
+		}
+		h.handleHisobotModeCallback(ctx, chatID, userID, mode, page, cq.Message)
+		return
+	}
+
+	if strings.HasPrefix(data, "hisobot_day|") {
+		raw := strings.TrimPrefix(data, "hisobot_day|")
+		parts := strings.Split(raw, "|")
+		date := ""
+		page := 0
+		if len(parts) >= 1 {
+			date = strings.TrimSpace(parts[0])
+		}
+		if len(parts) >= 2 {
+			if v, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+				page = v
+			}
+		}
+		h.handleHisobotDayCallback(ctx, chatID, userID, date, page, cq.Message)
+		return
+	}
+
+	if strings.HasPrefix(data, "hisobot_month|") {
+		raw := strings.TrimPrefix(data, "hisobot_month|")
+		parts := strings.Split(raw, "|")
+		ym := ""
+		page := 0
+		if len(parts) >= 1 {
+			ym = strings.TrimSpace(parts[0])
+		}
+		if len(parts) >= 2 {
+			if v, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+				page = v
+			}
+		}
+		h.handleHisobotMonthCallback(ctx, chatID, userID, ym, page, cq.Message)
+		return
+	}
+
 	if strings.HasPrefix(data, "sticker_set|") {
 		raw := strings.TrimPrefix(data, "sticker_set|")
 		var slot stickerSlot

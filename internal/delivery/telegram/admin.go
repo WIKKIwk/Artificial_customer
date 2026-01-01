@@ -1065,6 +1065,7 @@ func (h *BotHandler) getAdminMenuText() string {
 🛒 *Buyurtmalar:*
 • /orders - So'nggi buyurtmalar
 • /top - TOP mahsulotlar
+• /hisobot - Kunlik/oylik hisobot
 
 ⚙️ *Sozlamalar:*
 • /val - Valyuta rejimi
