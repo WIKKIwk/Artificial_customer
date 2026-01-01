@@ -190,6 +190,15 @@ func (h *BotHandler) buildHisobotDaysList(ctx context.Context, lang string, page
 	if err != nil {
 		return "", nil, err
 	}
+	if len(days) == 0 {
+		text := t(lang, "📑 *Kunlik hisobot*\n\nHali hisobot mavjud kunlar yo'q.", "📑 *Дневной отчёт*\n\nПока нет дней с отчётом.")
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(t(lang, "⬅️ Orqaga", "⬅️ Назад"), "hisobot_menu"),
+			),
+		)
+		return text, &kb, nil
+	}
 
 	page = clampPage(page, len(days), hisobotDaysPerPage)
 	totalPages := calcTotalPages(len(days), hisobotDaysPerPage)
@@ -244,6 +253,15 @@ func (h *BotHandler) buildHisobotMonthsList(ctx context.Context, lang string, pa
 	months, err := h.listHisobotMonths(ctx)
 	if err != nil {
 		return "", nil, err
+	}
+	if len(months) == 0 {
+		text := t(lang, "📑 *Oylik hisobot*\n\nHali hisobot mavjud oylar yo'q.", "📑 *Месячный отчёт*\n\nПока нет месяцев с отчётом.")
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(t(lang, "⬅️ Orqaga", "⬅️ Назад"), "hisobot_menu"),
+			),
+		)
+		return text, &kb, nil
 	}
 
 	page = clampPage(page, len(months), hisobotMonthsPerPage)
@@ -394,36 +412,129 @@ func (h *BotHandler) buildHisobotMonthReportPayload(ctx context.Context, lang st
 }
 
 func (h *BotHandler) listHisobotDays(ctx context.Context) ([]time.Time, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	startDay, err := h.ensureHisobotStartDay(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	now := time.Now().In(time.Local)
-	ny, nm, nd := now.Date()
-	today := time.Date(ny, nm, nd, 0, 0, 0, 0, time.Local)
+	// Prefer DB aggregation when available.
+	if store, ok := h.orderStore.(*postgresStore); ok && store != nil && store.db != nil {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
 
-	var res []time.Time
-	for day := today; !day.Before(startDay); day = day.AddDate(0, 0, -1) {
-		res = append(res, day)
+		rows, err := store.db.QueryContext(ctx, `
+			SELECT DISTINCT (created_at AT TIME ZONE $1)::date AS local_day
+			FROM orders
+			WHERE created_at >= $2
+			ORDER BY local_day DESC
+		`, hisobotTZName(), startDay)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var res []time.Time
+		for rows.Next() {
+			var d time.Time
+			if err := rows.Scan(&d); err != nil {
+				return nil, err
+			}
+			y, m, day := d.Date()
+			res = append(res, time.Date(y, m, day, 0, 0, 0, 0, time.Local))
+		}
+		return res, nil
 	}
+
+	// Fallback: group in-memory orders.
+	h.orderStatusMu.RLock()
+	defer h.orderStatusMu.RUnlock()
+
+	seen := make(map[string]struct{})
+	var res []time.Time
+	for _, ord := range h.orderStatuses {
+		if ord.CreatedAt.IsZero() {
+			continue
+		}
+		local := ord.CreatedAt.In(time.Local)
+		if local.Before(startDay) {
+			continue
+		}
+		y, m, d := local.Date()
+		key := fmt.Sprintf("%04d-%02d-%02d", y, m, d)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		res = append(res, time.Date(y, m, d, 0, 0, 0, 0, time.Local))
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].After(res[j]) })
 	return res, nil
 }
 
 func (h *BotHandler) listHisobotMonths(ctx context.Context) ([]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	startDay, err := h.ensureHisobotStartDay(ctx)
 	if err != nil {
 		return nil, err
 	}
-	startMonth := time.Date(startDay.Year(), startDay.Month(), 1, 0, 0, 0, 0, time.Local)
 
-	now := time.Now().In(time.Local)
-	nowMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+	// Prefer DB aggregation when available.
+	if store, ok := h.orderStore.(*postgresStore); ok && store != nil && store.db != nil {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
 
-	var res []string
-	for m := nowMonth; !m.Before(startMonth); m = m.AddDate(0, -1, 0) {
-		res = append(res, m.Format("2006-01"))
+		rows, err := store.db.QueryContext(ctx, `
+			SELECT DISTINCT to_char(created_at AT TIME ZONE $1, 'YYYY-MM') AS ym
+			FROM orders
+			WHERE created_at >= $2
+			ORDER BY ym DESC
+		`, hisobotTZName(), startDay)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var res []string
+		for rows.Next() {
+			var ym sql.NullString
+			if err := rows.Scan(&ym); err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(ym.String) == "" {
+				continue
+			}
+			res = append(res, ym.String)
+		}
+		return res, nil
 	}
+
+	// Fallback: group in-memory orders.
+	h.orderStatusMu.RLock()
+	defer h.orderStatusMu.RUnlock()
+
+	seen := make(map[string]struct{})
+	var res []string
+	for _, ord := range h.orderStatuses {
+		if ord.CreatedAt.IsZero() {
+			continue
+		}
+		local := ord.CreatedAt.In(time.Local)
+		if local.Before(startDay) {
+			continue
+		}
+		key := local.Format("2006-01")
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		res = append(res, key)
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i] > res[j] })
 	return res, nil
 }
 
