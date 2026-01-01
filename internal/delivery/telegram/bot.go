@@ -111,6 +111,9 @@ type BotHandler struct {
 	stickerCfg   *stickerConfig
 	stickerAwait map[int64]stickerSlot
 
+	group1PendingMu       sync.RWMutex
+	group1PendingApprovals map[int]struct{}
+
 	sheetMasterSetupMu sync.RWMutex
 	sheetMasterSetup   map[int64]*sheetMasterSetupState
 
@@ -252,6 +255,7 @@ func NewBotHandler(
 		purchaseTitle:      make(map[int64]string),
 		purchaseMsg:        make(map[int64]purchasePromptMessage),
 		stickerAwait:       make(map[int64]stickerSlot),
+		group1PendingApprovals: make(map[int]struct{}),
 		sheetMasterSetup:   make(map[int64]*sheetMasterSetupState),
 		lastSeen:           make(map[int64]time.Time),
 		lastName:           make(map[int64]string),

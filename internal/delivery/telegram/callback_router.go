@@ -337,6 +337,7 @@ func (h *BotHandler) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 				log.Printf("❌ PC config approval request send error: %v", err)
 			} else {
 				log.Printf("✅ PC config approval request sent to Topic 4 for user %d, messageID=%d", userID, msg.MessageID)
+				h.markGroup1PendingApproval(msg.MessageID)
 				h.saveGroupThread(msg.MessageID, groupThreadInfo{
 					UserID:    userID,
 					UserChat:  info.ChatID,
@@ -682,6 +683,7 @@ func (h *BotHandler) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQu
 				log.Printf("❌ PC config approval request send error: %v", err)
 			} else {
 				log.Printf("✅ PC config approval request sent to Topic 4 for user %d, messageID=%d", userID, msg.MessageID)
+				h.markGroup1PendingApproval(msg.MessageID)
 				h.saveGroupThread(msg.MessageID, groupThreadInfo{
 					UserID:    userID,
 					UserChat:  chatID,

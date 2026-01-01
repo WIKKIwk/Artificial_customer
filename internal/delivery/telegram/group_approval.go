@@ -152,6 +152,7 @@ func (h *BotHandler) handleGroupMessage(ctx context.Context, message *tgbotapi.M
 		Username: targetInfo.Username,
 		SentAt:   time.Now(),
 	})
+	h.clearGroup1PendingApproval(message.ReplyToMessage.MessageID)
 
 	h.sendMessage(message.Chat.ID, t(lang, "📨 Foydalanuvchiga yuborildi.", "📨 Отправлено пользователю."))
 }

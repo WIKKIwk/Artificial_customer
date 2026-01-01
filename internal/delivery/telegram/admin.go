@@ -1069,6 +1069,7 @@ func (h *BotHandler) getAdminMenuText() string {
 ⚙️ *Sozlamalar:*
 • /val - Valyuta rejimi
 • /sticker - Sticker sozlash
+• /stats - Buyurtma statistika
 • /not - Eslatmalar
 
 🚪 /logout - Chiqish`, productCount, userCount, onlineCount, todayOrders)

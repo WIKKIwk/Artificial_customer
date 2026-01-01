@@ -80,6 +80,8 @@ func (h *BotHandler) handleCommand(ctx context.Context, message *tgbotapi.Messag
 		h.handleValCommand(ctx, message)
 	case "sticker":
 		h.handleStickerCommand(ctx, message)
+	case "stats":
+		h.handleStatsCommand(ctx, message)
 	case "savat":
 		h.handleCartCommand(message.Chat.ID, message.From.ID)
 	case "not":
