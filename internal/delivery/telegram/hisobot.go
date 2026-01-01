@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/xuri/excelize/v2"
 )
 
 const (
@@ -132,12 +134,15 @@ func (h *BotHandler) handleHisobotDayCallback(ctx context.Context, chatID int64,
 		return
 	}
 	lang := h.getUserLang(adminID)
-	text, kb, err := h.buildHisobotDayReport(ctx, lang, date, page)
+	text, kb, xlsxBytes, filename, caption, err := h.buildHisobotDayReportPayload(ctx, lang, date, page)
 	if err != nil {
 		h.sendMessage(chatID, t(lang, "❌ Sana noto'g'ri. Iltimos, qayta tanlang.", "❌ Неверная дата. Пожалуйста, выберите снова."))
 		return
 	}
 	h.editOrSendHisobotMessage(chatID, text, kb, srcMsg)
+	if len(xlsxBytes) > 0 {
+		h.sendHisobotXLSX(chatID, filename, caption, xlsxBytes)
+	}
 }
 
 func (h *BotHandler) handleHisobotMonthCallback(ctx context.Context, chatID int64, adminID int64, ym string, page int, srcMsg *tgbotapi.Message) {
@@ -147,12 +152,15 @@ func (h *BotHandler) handleHisobotMonthCallback(ctx context.Context, chatID int6
 		return
 	}
 	lang := h.getUserLang(adminID)
-	text, kb, err := h.buildHisobotMonthReport(ctx, lang, ym, page)
+	text, kb, xlsxBytes, filename, caption, err := h.buildHisobotMonthReportPayload(ctx, lang, ym, page)
 	if err != nil {
 		h.sendMessage(chatID, t(lang, "❌ Oy formati noto'g'ri. Iltimos, qayta tanlang.", "❌ Неверный формат месяца. Пожалуйста, выберите снова."))
 		return
 	}
 	h.editOrSendHisobotMessage(chatID, text, kb, srcMsg)
+	if len(xlsxBytes) > 0 {
+		h.sendHisobotXLSX(chatID, filename, caption, xlsxBytes)
+	}
 }
 
 func (h *BotHandler) editOrSendHisobotMessage(chatID int64, text string, kb *tgbotapi.InlineKeyboardMarkup, srcMsg *tgbotapi.Message) {
@@ -286,10 +294,10 @@ func (h *BotHandler) buildHisobotMonthsList(ctx context.Context, lang string, pa
 	return text, &kb, nil
 }
 
-func (h *BotHandler) buildHisobotDayReport(ctx context.Context, lang string, date string, page int) (string, *tgbotapi.InlineKeyboardMarkup, error) {
+func (h *BotHandler) buildHisobotDayReportPayload(ctx context.Context, lang string, date string, page int) (string, *tgbotapi.InlineKeyboardMarkup, []byte, string, string, error) {
 	day, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(date), time.Local)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, "", "", err
 	}
 	year, month, d := day.Date()
 	start := time.Date(year, month, d, 0, 0, 0, 0, time.Local)
@@ -297,7 +305,7 @@ func (h *BotHandler) buildHisobotDayReport(ctx context.Context, lang string, dat
 
 	orders, err := h.listOrdersCreatedBetween(ctx, start, end)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, "", "", err
 	}
 	stats := computeHisobotStats(orders)
 
@@ -317,32 +325,42 @@ func (h *BotHandler) buildHisobotDayReport(ctx context.Context, lang string, dat
 			tgbotapi.NewInlineKeyboardButtonData(t(lang, "⬅️ Orqaga", "⬅️ Назад"), fmt.Sprintf("hisobot_mode|day|%d", maxInt(page, 0))),
 		),
 	)
-	return sb.String(), &kb, nil
+	xlsxBytes, xlsxErr := buildHisobotXLSX(
+		fmt.Sprintf("Kunlik hisobot: %s", start.Format("2006-01-02")),
+		stats,
+		orders,
+	)
+	if xlsxErr != nil {
+		xlsxBytes = nil
+	}
+	filename := fmt.Sprintf("hisobot_day_%s.xlsx", start.Format("2006-01-02"))
+	caption := fmt.Sprintf("📑 Kunlik hisobot\n📅 %s", start.Format("2006-01-02"))
+	return sb.String(), &kb, xlsxBytes, filename, caption, nil
 }
 
-func (h *BotHandler) buildHisobotMonthReport(ctx context.Context, lang string, ym string, page int) (string, *tgbotapi.InlineKeyboardMarkup, error) {
+func (h *BotHandler) buildHisobotMonthReportPayload(ctx context.Context, lang string, ym string, page int) (string, *tgbotapi.InlineKeyboardMarkup, []byte, string, string, error) {
 	ym = strings.TrimSpace(ym)
 	if ym == "" {
-		return "", nil, fmt.Errorf("empty month")
+		return "", nil, nil, "", "", fmt.Errorf("empty month")
 	}
 	parts := strings.SplitN(ym, "-", 2)
 	if len(parts) != 2 {
-		return "", nil, fmt.Errorf("invalid month format")
+		return "", nil, nil, "", "", fmt.Errorf("invalid month format")
 	}
 	year, err := strconv.Atoi(parts[0])
 	if err != nil || year < 2000 || year > 3000 {
-		return "", nil, fmt.Errorf("invalid year")
+		return "", nil, nil, "", "", fmt.Errorf("invalid year")
 	}
 	monthInt, err := strconv.Atoi(parts[1])
 	if err != nil || monthInt < 1 || monthInt > 12 {
-		return "", nil, fmt.Errorf("invalid month")
+		return "", nil, nil, "", "", fmt.Errorf("invalid month")
 	}
 	start := time.Date(year, time.Month(monthInt), 1, 0, 0, 0, 0, time.Local)
 	end := start.AddDate(0, 1, 0)
 
 	orders, err := h.listOrdersCreatedBetween(ctx, start, end)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, "", "", err
 	}
 	stats := computeHisobotStats(orders)
 
@@ -362,7 +380,17 @@ func (h *BotHandler) buildHisobotMonthReport(ctx context.Context, lang string, y
 			tgbotapi.NewInlineKeyboardButtonData(t(lang, "⬅️ Orqaga", "⬅️ Назад"), fmt.Sprintf("hisobot_mode|month|%d", maxInt(page, 0))),
 		),
 	)
-	return sb.String(), &kb, nil
+	xlsxBytes, xlsxErr := buildHisobotXLSX(
+		fmt.Sprintf("Oylik hisobot: %s", start.Format("2006-01")),
+		stats,
+		orders,
+	)
+	if xlsxErr != nil {
+		xlsxBytes = nil
+	}
+	filename := fmt.Sprintf("hisobot_month_%s.xlsx", start.Format("2006-01"))
+	caption := fmt.Sprintf("📑 Oylik hisobot\n🗓 %s", start.Format("2006-01"))
+	return sb.String(), &kb, xlsxBytes, filename, caption, nil
 }
 
 func (h *BotHandler) listHisobotDays(ctx context.Context) ([]time.Time, error) {
@@ -580,6 +608,127 @@ func (h *BotHandler) findEarliestOrderCreatedAt(ctx context.Context) (time.Time,
 		return time.Time{}, false, nil
 	}
 	return min, true, nil
+}
+
+func (h *BotHandler) sendHisobotXLSX(chatID int64, filename string, caption string, bytes []byte) {
+	if strings.TrimSpace(filename) == "" || len(bytes) == 0 {
+		return
+	}
+	doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: filename, Bytes: bytes})
+	if strings.TrimSpace(caption) != "" {
+		doc.Caption = caption
+	}
+	sent, err := h.sendAndLog(doc)
+	if err != nil {
+		return
+	}
+	h.trackAdminMessage(chatID, sent.MessageID)
+}
+
+func buildHisobotXLSX(period string, stats hisobotStats, orders []orderStatusInfo) ([]byte, error) {
+	f := excelize.NewFile()
+
+	summarySheet := f.GetSheetName(0)
+	_ = f.SetSheetName(summarySheet, "Summary")
+	summarySheet = "Summary"
+
+	if _, err := f.NewSheet("Orders"); err != nil {
+		return nil, err
+	}
+
+	summary := [][]interface{}{
+		{"Hisobot", ""},
+		{"Davr", period},
+		{"Timezone", hisobotTZName()},
+		{"Jami buyurtmalar", stats.TotalOrders},
+		{"Sotilgan komponentlar", stats.ComponentsSold},
+		{"Active (processing/ready)", stats.ActiveOrders},
+		{"Jarayonda (pickup/onway)", stats.InProgress},
+		{"Yakunlangan (delivered)", stats.Delivered},
+		{"Bekor qilingan", stats.Canceled},
+	}
+	for i, row := range summary {
+		for j, v := range row {
+			cell, err := excelize.CoordinatesToCellName(j+1, i+1)
+			if err != nil {
+				return nil, err
+			}
+			if err := f.SetCellValue(summarySheet, cell, v); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	headers := []string{
+		"CreatedAt (UZ)",
+		"OrderID",
+		"Status",
+		"Username",
+		"Phone",
+		"Location",
+		"Delivery",
+		"Total",
+		"ComponentsCount",
+		"Components",
+		"Summary",
+		"StatusSummary",
+	}
+	for i, h := range headers {
+		cell, err := excelize.CoordinatesToCellName(i+1, 1)
+		if err != nil {
+			return nil, err
+		}
+		if err := f.SetCellValue("Orders", cell, h); err != nil {
+			return nil, err
+		}
+	}
+
+	for idx, ord := range orders {
+		rowIdx := idx + 2
+		created := ord.CreatedAt
+		if !created.IsZero() {
+			created = created.In(time.Local)
+		}
+		components := extractComponentsForStats(ord.Summary)
+		values := []interface{}{
+			formatOptionalTime(created),
+			ord.OrderID,
+			ord.Status,
+			ord.Username,
+			ord.Phone,
+			ord.Location,
+			ord.Delivery,
+			ord.Total,
+			len(components),
+			strings.Join(components, ", "),
+			strings.TrimSpace(ord.Summary),
+			strings.TrimSpace(ord.StatusSummary),
+		}
+		for c, v := range values {
+			cell, err := excelize.CoordinatesToCellName(c+1, rowIdx)
+			if err != nil {
+				return nil, err
+			}
+			if err := f.SetCellValue("Orders", cell, v); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	f.SetActiveSheet(0)
+
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func formatOptionalTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02 15:04:05")
 }
 
 func calcTotalPages(total int, pageSize int) int {
